@@ -1,0 +1,95 @@
+services:
+  - type: web
+    name: ai-closet-api
+    runtime: python
+    rootDir: backend
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_NAME
+        value: AI Closet API
+      - key: WEB_ORIGIN
+        sync: false
+      - key: STORAGE_MODE
+        value: supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: closet-images
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_VISION_MODEL
+        value: gpt-4.1-mini
+      - key: OPENAI_VISION_DETAIL
+        value: low
+      - key: OPENAI_EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: OPENAI_EMBEDDING_DIMENSIONS
+        value: "1536"
+      - key: RECOGNITION_WORKER_BATCH_SIZE
+        value: "3"
+      - key: RECOGNITION_WORKER_POLL_SECONDS
+        value: "2"
+      - key: RECOGNITION_WORKER_MAX_ATTEMPTS
+        value: "3"
+      - key: RECOGNITION_WORKER_JOB_TIMEOUT_SECONDS
+        value: "120"
+      - key: RECOGNITION_WORKER_RETRY_BASE_SECONDS
+        value: "10"
+      - key: RECOGNITION_WORKER_RETRY_MAX_SECONDS
+        value: "300"
+
+  - type: worker
+    name: ai-closet-recognition-worker
+    runtime: python
+    rootDir: backend
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.worker
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_NAME
+        value: AI Closet API
+      - key: WEB_ORIGIN
+        sync: false
+      - key: STORAGE_MODE
+        value: supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: closet-images
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_VISION_MODEL
+        value: gpt-4.1-mini
+      - key: OPENAI_VISION_DETAIL
+        value: low
+      - key: OPENAI_EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: OPENAI_EMBEDDING_DIMENSIONS
+        value: "1536"
+      - key: RECOGNITION_WORKER_BATCH_SIZE
+        value: "3"
+      - key: RECOGNITION_WORKER_POLL_SECONDS
+        value: "2"
+      - key: RECOGNITION_WORKER_MAX_ATTEMPTS
+        value: "3"
+      - key: RECOGNITION_WORKER_JOB_TIMEOUT_SECONDS
+        value: "120"
+      - key: RECOGNITION_WORKER_RETRY_BASE_SECONDS
+        value: "10"
+      - key: RECOGNITION_WORKER_RETRY_MAX_SECONDS
+        value: "300"
