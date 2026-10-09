@@ -7,15 +7,16 @@ AI Closet is a cross-platform wardrobe intelligence project with a Next.js web a
 | Path | Purpose |
 | --- | --- |
 | `web/` | Next.js + TypeScript frontend for auth, closet management, profile preferences, recommendations, and today's outfit. |
-| `backend/` | FastAPI API, recognition queue worker, OpenAI vision/embedding pipeline, Supabase repository layer, and recommendation services. |
+| `backend/` | FastAPI API, recognition and outfit workers, model providers, persistence adapters, and experiment accounting. |
 | `ios/` | Native iOS app and Core ML / outfit recommendation experiments. |
-| `docs/` | Architecture and local development runbooks for collaborators. |
+| `docs/` | Database and backend design guides, API contracts, and development runbooks. |
 
 ## Core Stack
 
 - Frontend: Next.js, TypeScript
 - Backend: Python, FastAPI
-- AI/Agent workflow: OpenAI Vision, embeddings, async recognition worker
+- AI workflow: vision recognition, embeddings, anchor-based outfit generation, and visual review
+- Background processing: durable database queues with separate recognition and outfit workers
 - Database: Supabase Postgres with pgvector-backed item embeddings
 - Storage: Supabase Storage with private user-scoped object paths and signed URLs
 - Auth and security: Supabase Auth, Row Level Security, user-owned records
@@ -30,11 +31,16 @@ git lfs install
 git lfs pull
 ```
 
-Run these in separate terminals:
+Install dependencies and configure the environment following [Local Development](docs/LOCAL_DEVELOPMENT.md). Apply the matching [database migrations](backend/sql/migrations/README.md) before starting the API and workers.
+
+Run these from the repository root in separate terminals:
 
 ```bash
-make backend-dev
-make worker
+make backend-dev PYTHON=python
+make worker PYTHON=python
+# Outfit generation uses a separate worker:
+cd backend && python -m app.outfit_worker
+# Web client (another terminal, from the repository root):
 make web-dev
 ```
 
@@ -46,14 +52,21 @@ Backend:
 
 ```bash
 cd backend
-/opt/anaconda3/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Worker:
+Recognition worker:
 
 ```bash
 cd backend
-/opt/anaconda3/bin/python -m app.worker
+python -m app.worker
+```
+
+Outfit worker:
+
+```bash
+cd backend
+python -m app.outfit_worker
 ```
 
 Web:
@@ -65,6 +78,14 @@ npm run dev
 
 ## Documentation
 
+Start here for a code-backed explanation of the design and interview discussion:
+
+- [Database Design Guide — schema, technology choices, tradeoffs, and interview questions](docs/DATABASE_GUIDE.md)
+- [Backend Architecture Guide — modules, workflows, technology choices, and limitations](docs/BACKEND_GUIDE.md)
+- [Database Design Guide (Chinese)](docs/DATABASE_GUIDE.zh-CN.md)
+- [Backend Architecture Guide (Chinese)](docs/BACKEND_GUIDE.zh-CN.md)
+- [Data Architecture and Migration Guide (Chinese)](docs/DATA_ARCHITECTURE.zh-CN.md)
+
 - [Architecture](docs/ARCHITECTURE.md)
 - [API Contract](docs/API.md)
 - [Local Development](docs/LOCAL_DEVELOPMENT.md)
@@ -74,9 +95,11 @@ npm run dev
 ## Current Scope And Limitations
 
 - Recognition runs asynchronously through a durable job table so uploads return before Vision and embedding work completes.
-- Outfit selection uses deterministic candidate generation and explainable scoring. Semantic embeddings are stored in pgvector, while the current MVP performs per-user semantic re-ranking in the backend rather than database KNN retrieval.
-- Personalization currently comes from explicit profile preferences and current filters. Interaction-based learning and offline ranking evaluation are planned, not yet implemented.
-- Uploaded clothing photos are private in Supabase Storage and are sent to OpenAI Vision only for the user-requested recognition step. See the deployment guide before using real credentials or deploying the project.
+- The outfit library uses rule/vector candidate retrieval, model generation and visual review. The existing recommendation endpoints still use a separate deterministic candidate/scoring pipeline. Semantic embeddings are stored in pgvector; current per-user semantic ranking runs in the backend rather than database KNN retrieval.
+- Personalization currently uses explicit preferences and filters. Human annotation and algorithm comparisons support evaluation; learning personalized behavior from interactions remains future work.
+- Core database writes use transactions and version checks. External model calls, image storage, and frontend refreshes are outside that transaction boundary; retries do not guarantee exactly-once model execution.
+- Model configuration is recorded per run, and usage is counted per model call. Missing pricing or usage remains unknown rather than being reported as free.
+- Uploaded clothing photos are private in Supabase Storage. Recognition and image-enabled outfit generation/review send photos to the configured model provider. See the deployment guide before using real credentials or deploying the project.
 
 ## Security Notes
 

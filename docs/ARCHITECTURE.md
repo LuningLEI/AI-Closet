@@ -1,5 +1,7 @@
 # Architecture
 
+For a current code-reading and interview overview, see the [backend guide](BACKEND_GUIDE.md) and [database guide](DATABASE_GUIDE.md). Migration-dependent features require the corresponding SQL to be applied; source code presence does not confirm deployment.
+
 AI Closet is split into three product surfaces: web, backend, and iOS. The backend owns data access, recognition, recommendations, storage signing, and user isolation. The web and iOS clients should share the same backend contracts wherever possible.
 
 ## High-Level Flow
@@ -31,6 +33,7 @@ Recognition output is stored as typed fields plus auditable payloads:
 - `clothing_items` keeps the latest item state for product UI and recommendation.
 - `recognition_records` keeps each recognition/manual-edit event for model evaluation and debugging.
 - `item_feature_snapshots` keeps vector and feature snapshots for retrieval and future ranking experiments.
+- `item_edit_events` is an append-only log of user-confirmed card corrections, including taxonomy fields and final image transforms. It is analytics data, not the current item state.
 
 Stable fields include version columns, taxonomy labels, material, pattern, fit, length, sleeve length, neckline, layering role, warmth level, formality score, confidence, and status. JSONB payloads remain available for raw provider output and backwards-compatible experiments.
 
@@ -74,7 +77,7 @@ Current versions:
 - `style-preference-v1`
 - `clothing-analysis-v1`
 - `item-feature-v1`
-- `taxonomy-normalization-v1`
+- `taxonomy-normalization-v7-hosiery-layering`
 - `manual-taxonomy-edit-v1`
 
 These versions are stored with user preferences, clothing items, recognition records, and feature snapshots. This makes future migrations, model evaluation, and training dataset slicing easier because historical records can be grouped by the logic that created them.
@@ -115,6 +118,7 @@ Every user-owned table includes `user_id` and is protected by Supabase Row Level
 - `recognition_records`
 - `item_feature_snapshots`
 - `recognition_jobs`
+- `item_edit_events`
 - `user_preferences`
 
 Storage objects are private and organized as:
@@ -152,3 +156,19 @@ The iOS app should reuse backend concepts rather than creating a separate data m
 - Recommendations from the shared backend engine
 
 The API contract is exported from FastAPI OpenAPI into `docs/api/openapi.json`. Web TypeScript types are generated from that contract into `web/lib/generated/api-types.ts`; iOS can later generate a Swift client from the same file.
+
+## Anchor-driven outfit library
+
+`app/outfits/` implements a separately configured two-pass image generation/evaluation pipeline. `outfit_libraries` enrolls users, `outfit_build_jobs` persists leased idempotent anchor jobs, `outfits` retains immutable versioned scores and item snapshots, and `outfit_items` indexes membership. Owner-read RLS and service-role-only claim/save RPCs protect model-generated state. Local development uses transactional SQLite through the same store interface.
+
+The outfit worker polls ready clothing records for enrolled users and adds jobs for new item or inference revisions. The API filters versioned results by current member state, structure and configured aesthetic cutoff; threshold-only changes reuse saved scores. iOS Closet switches between Items and Outfits and supports querying every accepted outfit containing a selected item. The existing weather/occasion recommender remains unchanged until a later library-ranking phase. See `backend/app/outfits/README.md` for configuration and operational details.
+
+## Data lifecycle and outfit runs (008 / 009)
+
+See [数据架构与技术说明](DATA_ARCHITECTURE.zh-CN.md) for table ownership, current-versus-history
+relationships, atomic RPC boundaries, per-call accounting, retention, and rollout instructions.
+Run manifests are immutable; detailed model-call usage is counted once per request, not once per
+outfit. Missing billing data remains unknown. Current evaluation membership is derived from
+`outfit_projection_sources`; raw model evidence remains JSON while indexed review columns are
+database-generated. Production changes require sequential migrations 008 and 009 and a read-model
+rebuild before the API/workers restart. Legacy audit rows are preserved without invented run costs.
