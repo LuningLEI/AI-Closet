@@ -1,7 +1,3 @@
-fastapi>=0.111
-uvicorn>=0.30
-pydantic>=2.7
-python-multipart>=0.0.9
-supabase>=2.5
-httpx>=0.28
-pytest>=8.3
+# Compatibility entry point. pyproject.toml is the source of dependency intent;
+# requirements.lock is the reproducible production resolution.
+-r requirements.lock

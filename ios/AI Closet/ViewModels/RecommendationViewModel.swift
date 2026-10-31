@@ -11,8 +11,9 @@ final class RecommendationViewModel: NSObject, ObservableObject, CLLocationManag
     @Published var todayLocation: WeatherLocationDTO?
     @Published var todayWeather: WeatherDTO?
     @Published var todayRecommendations: [OutfitRecommendationDTO] = []
+    @Published private(set) var todayWearStatus: OutfitWearStatusDTO?
     @Published var recommendations: [OutfitRecommendationDTO] = []
-    @Published var taxonomy = TaxonomyDTO(categories: [], colors: [], styles: [], occasions: [], seasons: [], subtypes: [:])
+    @Published var taxonomy = TaxonomyDTO(categories: [], colors: [], styles: [], occasions: [], seasons: [], subtypes: [:],lengths:[],sleeveLengths:[])
     @Published var cityQuery = LocationPresets.defaultLocation.label
     @Published var selectedOccasion = "Everyday"
     @Published var selectedStyle = "Any"
@@ -40,6 +41,19 @@ final class RecommendationViewModel: NSObject, ObservableObject, CLLocationManag
         return todayRecommendations[activeIndex]
     }
 
+    var hasSelectedTodayOutfit: Bool { todayWearStatus?.selectedToday != nil }
+
+    var selectedTodayRecommendation: OutfitRecommendationDTO? {
+        guard let event=todayWearStatus?.selectedToday,
+              let items=todayWearStatus?.selectedTodayItems,!items.isEmpty else { return nil }
+        return OutfitRecommendationDTO(
+            id:"today-selection-\(event.id.uuidString)",title:"Today's outfit",score:0,reasons:[],
+            stylingNotes:[],missingSlots:[],
+            breakdown:RecommendationBreakdownDTO(semanticFit:0,occasionFit:0,weatherFit:0,
+                                                 styleHarmony:0,colorHarmony:0,categoryBalance:0),
+            items:items)
+    }
+
     var activeRecommendation: OutfitRecommendationDTO? {
         guard recommendations.indices.contains(activeIndex) else { return nil }
         return recommendations[activeIndex]
@@ -52,21 +66,23 @@ final class RecommendationViewModel: NSObject, ObservableObject, CLLocationManag
     func loadTaxonomy(token: String?) async {
         do {
             taxonomy = try await apiClient.get("/api/v1/taxonomy", token: token)
-            selectedOccasion = ClosetSelectionSupport.plannerOccasions.contains(selectedOccasion) ? selectedOccasion : ClosetSelectionSupport.plannerOccasions.first ?? selectedOccasion
+            ClothingTaxonomySupport.install(taxonomy)
+            selectedOccasion = taxonomy.occasions.contains(selectedOccasion) ? selectedOccasion : taxonomy.occasions.first ?? selectedOccasion
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
     func loadToday(token: String?) async {
-        await loadToday(token: token, cityQuery: cityQuery)
+        await loadToday(token: token, cityQuery: cityQuery, occasion: selectedOccasion)
     }
 
-    func bootstrapToday(token: String?) async {
-        await loadToday(token: token, cityQuery: cityQuery)
+    func bootstrapToday(token: String?, occasion: String) async {
+        await loadToday(token: token, cityQuery: cityQuery, occasion: occasion)
     }
 
-    func loadToday(token: String?, cityQuery: String) async {
+    func loadToday(token: String?, cityQuery: String, occasion: String) async {
+        await refreshTodaySelection(token:token)
         let normalizedQuery = normalizedCityQuery(cityQuery)
         guard !normalizedQuery.isEmpty else {
             todayWeatherErrorMessage = "l10n:today.city_required"
@@ -117,7 +133,7 @@ final class RecommendationViewModel: NSObject, ObservableObject, CLLocationManag
         isLoadingTodayRecommendations = true
         todayRecommendations = []
         do {
-            let response = try await loadTodayRecommendations(token: token, weather: weather, occasion: "Everyday")
+            let response = try await loadTodayRecommendations(token: token, weather: weather, occasion: occasion)
             guard requestID == todayLoadSequence else { return }
             todayRecommendations = response.recommendations
         } catch {
@@ -145,8 +161,8 @@ final class RecommendationViewModel: NSObject, ObservableObject, CLLocationManag
         cityQuery = suggestion
     }
 
-    func submitCityQuery(token: String?) async {
-        await loadToday(token: token, cityQuery: cityQuery)
+    func submitCityQuery(token: String?, occasion: String) async {
+        await loadToday(token: token, cityQuery: cityQuery, occasion: occasion)
     }
 
     func refreshTodayRecommendations(token: String?, occasion: String) async {
@@ -173,6 +189,26 @@ final class RecommendationViewModel: NSObject, ObservableObject, CLLocationManag
         isLoadingTodayRecommendations = false
     }
 
+    func selectForToday(_ recommendation: OutfitRecommendationDTO,token:String?) async {
+        todayRecommendations.removeAll { $0.id == recommendation.id }
+        activeIndex = min(activeIndex, max(0, todayRecommendations.count - 1))
+        await refreshTodaySelection(token:token)
+    }
+
+    func clearTodaySelection(token:String?) async {
+        await refreshTodaySelection(token:token)
+    }
+
+    func refreshTodaySelection(token:String?) async {
+        do {
+            todayWearStatus = try await apiClient.get(
+                "/api/v1/outfits/wear/status",token:token,
+                queryItems:[URLQueryItem(name:"wear_date",value:Self.localDateString())])
+        } catch {
+            todayRecommendationErrorMessage=error.localizedDescription
+        }
+    }
+
     func generate(token: String?) async {
         isLoading = true
         errorMessage = nil
@@ -197,6 +233,12 @@ final class RecommendationViewModel: NSObject, ObservableObject, CLLocationManag
     func move(_ direction: Int, count: Int) {
         guard count > 0 else { return }
         activeIndex = (activeIndex + direction + count) % count
+    }
+
+    func removeTodayRecommendation(id: String) {
+        todayRecommendations.removeAll { $0.id == id }
+        if todayRecommendations.isEmpty { activeIndex = 0 }
+        else { activeIndex = min(activeIndex, todayRecommendations.count - 1) }
     }
 
     private func loadTodayRecommendations(
@@ -234,5 +276,13 @@ final class RecommendationViewModel: NSObject, ObservableObject, CLLocationManag
 
     private func normalizedCityQuery(_ query: String) -> String {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func localDateString(_ date:Date=Date())->String {
+        let formatter = DateFormatter()
+        formatter.calendar = .current
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
     }
 }

@@ -19,7 +19,7 @@ struct AddClothingSheet: View {
     @State var category: String
     @State private var subtype: String = "Unknown"
     @State private var color: String = "Unknown"
-    @State private var selectedSeasons: Set<String> = ["All-Season"]
+    @State private var selectedSeasons: Set<String> = ["Spring", "Summer", "Fall", "Winter"]
     @State private var style: String = "Casual"
     @State private var occasion: String = "Everyday"
     private let recognitionSource: String?
@@ -49,12 +49,13 @@ struct AddClothingSheet: View {
         rawStyle = analysis.rawStyle
         rawOccasion = analysis.rawOccasion
         rawSeasons = analysis.rawSeasons
-        _category = State(initialValue: analysis.category)
-        _subtype = State(initialValue: SubtypeSupport.normalized(analysis.subtype, for: analysis.category))
+        let canonicalCategory = analysis.subtype == "Cardigan" ? "Outerwear" : analysis.category
+        _category = State(initialValue: canonicalCategory)
+        _subtype = State(initialValue: SubtypeSupport.normalized(analysis.subtype, for: canonicalCategory))
         _color = State(initialValue: analysis.color)
         _selectedSeasons = State(initialValue: analysis.seasons)
         _style = State(initialValue: analysis.style)
-        _occasion = State(initialValue: analysis.occasion)
+        _occasion = State(initialValue: analysis.occasion == "Vacation" ? "Travel" : analysis.occasion)
     }
 
     var body: some View {
@@ -378,6 +379,8 @@ struct AddClothingSheet: View {
             return .red
         case "Green":
             return .green
+        case "Olive":
+            return Color(red: 0.5, green: 0.54, blue: 0.2)
         case "Brown":
             return Color(red: 0.45, green: 0.28, blue: 0.14)
         case "Beige":

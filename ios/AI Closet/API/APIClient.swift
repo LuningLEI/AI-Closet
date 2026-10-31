@@ -66,12 +66,14 @@ final class APIClient {
         try await performEmpty(request)
     }
 
-    func uploadImages(_ images: [Data], token: String?) async throws -> BatchUploadResponseDTO {
+    func uploadImages(_ images: [UploadImagePayload], token: String?) async throws -> BatchUploadResponseDTO {
         guard let token else { throw APIError.missingSession }
         let url = try makeURL("/api/v1/items/upload-batch")
         var request = URLRequest(url: url)
         let boundary = "Boundary-\(UUID().uuidString)"
-        let body = multipartBody(images: images, fieldName: "files", boundary: boundary)
+        let ids = try JSONEncoder().encode(images.map(\.filename))
+        let body = multipartBody(images: images, fieldName: "files", boundary: boundary,
+                                 textFields: ["upload_ids": String(decoding: ids, as: UTF8.self)])
         request.httpMethod = "POST"
         request.timeoutInterval = Timeout.uploadRequest
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -85,8 +87,22 @@ final class APIClient {
         try await uploadSingleImage("/api/v1/profile/avatar", image: image, token: token)
     }
 
-    func replaceItemImage(_ image: Data, itemID: UUID, token: String?) async throws -> ClothingItemDTO {
-        try await uploadSingleImage("/api/v1/items/\(itemID.uuidString)/image", image: image, token: token)
+    func replaceItemImage(
+        _ image: Data,
+        itemID: UUID,
+        editMetadata: ImageEditMetadataDTO?,
+        token: String?
+    ) async throws -> ClothingItemDTO {
+        var formFields: [String: String] = [:]
+        if let editMetadata {
+            formFields["edit_metadata"] = String(decoding: try encoder.encode(editMetadata), as: UTF8.self)
+        }
+        return try await uploadSingleImage(
+            "/api/v1/items/\(itemID.uuidString)/image",
+            image: image,
+            formFields: formFields,
+            token: token
+        )
     }
 
     private static func tokenSummary(_ token: String?) -> String {
@@ -94,7 +110,12 @@ final class APIClient {
         return "len=\(token.count),prefix=\(String(token.prefix(16)))"
     }
 
-    private func uploadSingleImage<T: Decodable>(_ path: String, image: Data, token: String?) async throws -> T {
+    private func uploadSingleImage<T: Decodable>(
+        _ path: String,
+        image: Data,
+        formFields: [String: String] = [:],
+        token: String?
+    ) async throws -> T {
         guard let token else { throw APIError.missingSession }
         guard !image.isEmpty else {
             print("[APIClient] uploadSingleImage blocked", "path=\(path)", "reason=empty_image_data")
@@ -103,7 +124,12 @@ final class APIClient {
         let url = try makeURL(path)
         var request = URLRequest(url: url)
         let boundary = "Boundary-\(UUID().uuidString)"
-        let body = multipartBody(images: [image], fieldName: "file", boundary: boundary)
+        let body = multipartBody(
+            images: [UploadImagePayload(data: image, filename: "\(UUID().uuidString).jpg")],
+            fieldName: "file",
+            boundary: boundary,
+            textFields: formFields
+        )
         request.httpMethod = "POST"
         request.timeoutInterval = Timeout.uploadRequest
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -224,13 +250,24 @@ final class APIClient {
         }
     }
 
-    private func multipartBody(images: [Data], fieldName: String, boundary: String) -> Data {
+    private func multipartBody(
+        images: [UploadImagePayload],
+        fieldName: String,
+        boundary: String,
+        textFields: [String: String] = [:]
+    ) -> Data {
         var body = Data()
+        for (name, value) in textFields.sorted(by: { $0.key < $1.key }) {
+            body.append("--\(boundary)\r\n")
+            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
+            body.append(value)
+            body.append("\r\n")
+        }
         for image in images {
             body.append("--\(boundary)\r\n")
-            body.append("Content-Disposition: form-data; name=\"\(fieldName)\"; filename=\"\(UUID().uuidString).jpg\"\r\n")
+            body.append("Content-Disposition: form-data; name=\"\(fieldName)\"; filename=\"\(image.filename)\"\r\n")
             body.append("Content-Type: image/jpeg\r\n\r\n")
-            body.append(image)
+            body.append(image.data)
             body.append("\r\n")
         }
         body.append("--\(boundary)--\r\n")

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from typing import Any
+
 from app.models.domain import ClothingItemRecord, OutfitRecommendationRecord, RecommendationContext
 from app.services.embedding_service import EmbeddingService, recommendation_context_text
 from app.services.recommendation.candidates import CandidateGenerator
 from app.services.recommendation.scorer import CandidateScorer
-from app.services.recommendation.rules import profile_memory_text
+from app.services.recommendation.rules import profile_memory_text, recommendation_slot
 from app.services.taxonomy import merge_preferences
+from app.services.occasion_support import occasion_for_display
+from app.services.occasion_thresholds import resolve_thresholds
 
 
 class RecommendationEngine:
@@ -25,15 +29,31 @@ class RecommendationEngine:
         context: RecommendationContext,
         user_preferences: dict | None = None,
     ) -> list[OutfitRecommendationRecord]:
+        recommendations, _ = self.recommend_with_usage(items, context, user_preferences)
+        return recommendations
+
+    def recommend_with_usage(
+        self,
+        items: list[ClothingItemRecord],
+        context: RecommendationContext,
+        user_preferences: dict | None = None,
+    ) -> tuple[list[OutfitRecommendationRecord], dict[str, Any] | None]:
         preferences = merge_preferences(user_preferences)
+        thresholds = resolve_thresholds(preferences)
+        items = [occasion_for_display(item, thresholds) for item in items]
         recognized_items = self.candidate_generator.filter_recognized_items(items, preferences)
         candidates = self.candidate_generator.generate(recognized_items, context, preferences)
         has_semantic_vectors = any(item.semantic_vector for item in recognized_items)
         context_vector = None
+        embedding_usage = None
         if has_semantic_vectors:
-            context_vector = self.embedding_service.create_embedding(
-                recommendation_context_text(context) + " " + profile_memory_text(preferences)
-            )
+            context_text = recommendation_context_text(context) + " " + profile_memory_text(preferences, context.occasion)
+            create_with_usage = getattr(self.embedding_service, "create_embedding_with_usage", None)
+            if create_with_usage:
+                context_vector, embedding_usage = create_with_usage(context_text)
+            else:
+                # Keeps lightweight test doubles and custom integrations compatible.
+                context_vector = self.embedding_service.create_embedding(context_text)
 
         recommendations = [
             recommendation
@@ -43,7 +63,7 @@ class RecommendationEngine:
         recommendations.sort(key=lambda item: (-item.score, item.id))
         recommendations = self._prefer_structured_outfits(recommendations)
         recommendations = self._diversify(recommendations, context.limit)
-        return recommendations[: context.limit]
+        return recommendations[: context.limit], embedding_usage
 
     def _prefer_structured_outfits(
         self,
@@ -96,10 +116,10 @@ class RecommendationEngine:
         return primary
 
     def _has_core_outfit(self, recommendation: OutfitRecommendationRecord) -> bool:
-        categories = [item.category for item in recommendation.items]
-        has_full_body = any(category in {"Dresses", "Jumpsuits", "Sets", "Swimwear"} for category in categories)
-        has_top = "Tops" in categories or "Activewear" in categories or "Intimates" in categories
-        has_bottom = "Bottoms" in categories
+        slots = {recommendation_slot(item.category, item.subtype) for item in recommendation.items}
+        has_full_body = "FullBody" in slots
+        has_top = "Tops" in slots
+        has_bottom = "Bottoms" in slots
         return has_full_body or (has_top and has_bottom)
 
     def _is_complete_outfit(self, recommendation: OutfitRecommendationRecord) -> bool:

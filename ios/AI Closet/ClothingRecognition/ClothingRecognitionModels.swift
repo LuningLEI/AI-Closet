@@ -16,24 +16,6 @@ struct ClothingAnalysis: Equatable {
     var rawStyle: String?
     var rawOccasion: String?
     var rawSeasons: [String]
-
-    static let empty = ClothingAnalysis(
-        category: "Uncategorized",
-        subtype: nil,
-        color: "Unknown",
-        seasons: ["All-Season"],
-        style: "Casual",
-        occasion: "Everyday",
-        confidence: nil,
-        summary: nil,
-        source: "Unknown",
-        rawCategory: nil,
-        rawSubtype: nil,
-        rawColor: nil,
-        rawStyle: nil,
-        rawOccasion: nil,
-        rawSeasons: []
-    )
 }
 
 enum ClothingRecognitionError: LocalizedError {

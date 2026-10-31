@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import fcntl
+from contextlib import contextmanager
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.core.config import settings
 from app.core.constants import RECOGNITION_IN_PROGRESS_SOURCES, RETRYABLE_JOB_STATUSES, RecognitionStatus
-from app.models.domain import ClothingItemRecord, ItemFeatureSnapshot, RecognitionJobRecord, RecognitionRecord, utc_now_iso
+from app.models.domain import ClothingItemRecord, ItemEditEvent, ItemFeatureSnapshot, RecognitionJobRecord, RecognitionRecord, utc_now_iso
 from app.services.preference_schema import default_preference_record, normalize_preference_record, normalize_preference_updates
 
 
@@ -16,13 +18,63 @@ class ClosetRepository:
         self.items_path = items_path or settings.items_path
         self.recognition_records_path = settings.recognition_records_path
         self.recognition_jobs_path = settings.recognition_jobs_path
+        self.item_edit_events_path = settings.item_edit_events_path
         self.item_feature_snapshots_path = settings.item_feature_snapshots_path
         self.user_preferences_path = settings.data_dir / "user_preferences.json"
         self.items_path.parent.mkdir(parents=True, exist_ok=True)
         self.recognition_records_path.parent.mkdir(parents=True, exist_ok=True)
         self.recognition_jobs_path.parent.mkdir(parents=True, exist_ok=True)
+        self.item_edit_events_path.parent.mkdir(parents=True, exist_ok=True)
         self.item_feature_snapshots_path.parent.mkdir(parents=True, exist_ok=True)
         self.user_preferences_path.parent.mkdir(parents=True, exist_ok=True)
+
+    @contextmanager
+    def _items_lock(self):
+        with self.items_path.with_suffix('.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            try:yield
+            finally:fcntl.flock(lock,fcntl.LOCK_UN)
+
+    def update_item_if_current(self, expected, updates):
+        from app.services.label_confirmation import COMPARE_FIELDS
+        with self._items_lock():
+            current = self.get_item(expected.id, expected.user_id)
+            if current is None or any(getattr(current,k) != getattr(expected,k) for k in COMPARE_FIELDS):
+                return None
+            return self._update_item_unlocked(expected.id, updates, expected.user_id)
+
+    def commit_item_change(self, expected, updates, recognition=None, event=None, feature=None, job=None):
+        # Development JSON adapter: serialized commit with rollback on write errors.
+        # Production crash durability is provided by the PostgreSQL RPC, not this adapter.
+        from app.repositories.item_transactions import expected_item
+        paths=[self.items_path,self.recognition_records_path,self.item_edit_events_path,
+               self.item_feature_snapshots_path,self.recognition_jobs_path]
+        with self._items_lock():
+            current=self.get_item(expected.id,expected.user_id)
+            if current is None or expected_item(current)!=expected_item(expected):return None
+            before={p:p.read_bytes() if p.exists() else None for p in paths}
+            try:
+                result=self._update_item_unlocked(expected.id,updates,expected.user_id)
+                if recognition:self.add_recognition_record(recognition)
+                if event:self.add_item_edit_event(event)
+                if feature:self.add_feature_snapshot(feature)
+                if job:self.complete_recognition_job(job.id)
+                return result
+            except Exception:
+                for path,data in before.items():
+                    if data is None:path.unlink(missing_ok=True)
+                    else:path.write_bytes(data)
+                raise
+
+    def list_embedding_retry_candidates(self):
+        return [i for i in self.list_items() if i.semantic_vector is None and i.recognition_status in {'manual','complete'}]
+
+    def update_embedding_if_current(self,expected,updates):
+        from app.services.embedding_retry import same_snapshot
+        with self._items_lock():
+            current=self.get_item(expected.id,expected.user_id)
+            if current is None or not same_snapshot(current,expected):return None
+            return self._update_item_unlocked(expected.id,updates,expected.user_id)
 
     def list_items(self, user_id: str | None = None) -> list[ClothingItemRecord]:
         items = self._read_all()
@@ -30,16 +82,38 @@ class ClosetRepository:
             items = [item for item in items if item.user_id == user_id]
         return sorted(items, key=lambda item: item.created_at, reverse=True)
 
+    def list_items_for_outfits(self, user_id: str) -> list[ClothingItemRecord]:
+        return [item.model_copy(update={"semantic_vector": None, "feature_vector": None})
+                for item in self.list_items(user_id)]
+
+    def list_items_for_outfit_candidates(self, user_id: str) -> list[ClothingItemRecord]:
+        return self.list_items(user_id)
+
+    def list_items_for_recognition_reset(self, user_id: str) -> list[ClothingItemRecord]:
+        return self.list_items(user_id)
+
+    def list_recognition_jobs(self, user_id: str) -> list[RecognitionJobRecord]:
+        return [job for job in self._read_json_records(self.recognition_jobs_path, RecognitionJobRecord)
+                if job.user_id == user_id]
+
     def list_items_for_recommendation(self, user_id: str | None = None) -> list[ClothingItemRecord]:
         return self.list_items(user_id)
 
     def add_item(self, item: ClothingItemRecord) -> ClothingItemRecord:
+        with self._items_lock():
+            return self._add_item_unlocked(item)
+
+    def _add_item_unlocked(self, item: ClothingItemRecord) -> ClothingItemRecord:
         items = self._read_all()
         items.append(item)
         self._write_all(items)
         return item
 
     def update_item(self, item_id: str, updates: dict, user_id: str | None = None) -> ClothingItemRecord | None:
+        with self._items_lock():
+            return self._update_item_unlocked(item_id,updates,user_id)
+
+    def _update_item_unlocked(self, item_id: str, updates: dict, user_id: str | None = None) -> ClothingItemRecord | None:
         items = self._read_all()
         updated_item: ClothingItemRecord | None = None
         next_items: list[ClothingItemRecord] = []
@@ -55,6 +129,10 @@ class ClosetRepository:
         return updated_item
 
     def delete_item(self, item_id: str, user_id: str | None = None) -> ClothingItemRecord | None:
+        with self._items_lock():
+            return self._delete_item_unlocked(item_id,user_id)
+
+    def _delete_item_unlocked(self, item_id: str, user_id: str | None = None) -> ClothingItemRecord | None:
         items = self._read_all()
         deleted_item: ClothingItemRecord | None = None
         next_items: list[ClothingItemRecord] = []
@@ -76,21 +154,38 @@ class ClosetRepository:
         recognition_record: RecognitionRecord,
         feature_snapshot: ItemFeatureSnapshot,
     ) -> ClothingItemRecord:
-        self.add_item(item)
-        recognition_records = self._read_json_records(self.recognition_records_path, RecognitionRecord)
-        recognition_records.append(recognition_record)
-        self._write_json_records(self.recognition_records_path, recognition_records)
+        return self.create_item_with_records(item,recognition_record,feature_snapshot)
 
-        feature_snapshots = self._read_json_records(self.item_feature_snapshots_path, ItemFeatureSnapshot)
-        feature_snapshots.append(feature_snapshot)
-        self._write_json_records(self.item_feature_snapshots_path, feature_snapshots)
-        return item
+    def create_item_with_records(self,item,recognition=None,feature=None,job=None):
+        paths=[self.items_path,self.recognition_records_path,self.item_feature_snapshots_path,self.recognition_jobs_path]
+        with self._items_lock():
+            existing = self.get_item(item.id, item.user_id)
+            if existing is not None:
+                return existing
+            before={p:p.read_bytes() if p.exists() else None for p in paths}
+            try:
+                self._add_item_unlocked(item)
+                if recognition:self.add_recognition_record(recognition)
+                if feature:self.add_feature_snapshot(feature)
+                if job:self.create_recognition_job(job)
+                return item
+            except Exception:
+                for path,data in before.items():
+                    if data is None:path.unlink(missing_ok=True)
+                    else:path.write_bytes(data)
+                raise
 
     def add_recognition_record(self, recognition_record: RecognitionRecord) -> RecognitionRecord:
         recognition_records = self._read_json_records(self.recognition_records_path, RecognitionRecord)
         recognition_records.append(recognition_record)
         self._write_json_records(self.recognition_records_path, recognition_records)
         return recognition_record
+
+    def add_item_edit_event(self, event: ItemEditEvent) -> ItemEditEvent:
+        events = self._read_json_records(self.item_edit_events_path, ItemEditEvent)
+        events.append(event)
+        self._write_json_records(self.item_edit_events_path, events)
+        return event
 
     def add_feature_snapshot(self, feature_snapshot: ItemFeatureSnapshot) -> ItemFeatureSnapshot:
         feature_snapshots = self._read_json_records(self.item_feature_snapshots_path, ItemFeatureSnapshot)
@@ -233,6 +328,7 @@ class ClosetRepository:
         for path, model_cls in [
             (self.recognition_records_path, RecognitionRecord),
             (self.recognition_jobs_path, RecognitionJobRecord),
+            (self.item_edit_events_path, ItemEditEvent),
             (self.item_feature_snapshots_path, ItemFeatureSnapshot),
         ]:
             records = self._read_json_records(path, model_cls)

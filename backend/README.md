@@ -1,6 +1,6 @@
 # Backend
 
-For architecture, tradeoffs and interview preparation, read the [backend guide](../docs/BACKEND_GUIDE.md) and [database guide](../docs/DATABASE_GUIDE.md).
+For architecture, tradeoffs and interview preparation, read the [system guide](../docs/architecture/system.md) and [database guide](../docs/architecture/database.md).
 
 FastAPI service for AI Closet.
 
@@ -25,7 +25,7 @@ Worker:
 
 ```bash
 cd backend
-/opt/anaconda3/bin/python -m app.worker
+/opt/anaconda3/bin/python -m workers.recognition
 ```
 
 ## Check
@@ -48,7 +48,7 @@ This is separate from the production recommender: OpenAI receives closet images 
 
 ```bash
 cd backend
-/opt/anaconda3/bin/python -m app.baseline_eval \
+/opt/anaconda3/bin/python -m tools.evaluation.baseline_eval \
   --user-id YOUR_SUPABASE_USER_ID \
   --temperature-f 75 \
   --occasion Vacation \
@@ -66,7 +66,7 @@ This experiment creates a single human-readable comparison across three methods:
 
 ```bash
 cd backend
-/opt/anaconda3/bin/python -m app.comparison_eval \
+/opt/anaconda3/bin/python -m tools.evaluation.comparison_eval \
   --user-id YOUR_SUPABASE_USER_ID \
   --temperature-f 45 \
   --temperature-f 60 \
@@ -84,9 +84,9 @@ The output folder contains an `index.html` with links to every scenario, per-sce
 Each scenario report saves its selected garment images locally, so it remains viewable after the original Supabase signed URLs expire. To repair an older report that still contains expired URLs, without making an OpenAI request:
 
 ```bash
-/opt/anaconda3/bin/python -m app.comparison_eval \
+/opt/anaconda3/bin/python -m tools.evaluation.comparison_eval \
   --user-id YOUR_SUPABASE_USER_ID \
-  --refresh-images-run ../evaluation/comparison_runs/20260921-133521
+  --refresh-images-run ../evaluation/outfits/comparison_runs/20260921-133521
 ```
 
 The vector method uses each item's stored `semantic_vector`: an embedding of its structured recognition text (category, subtype, color, seasons, styles, occasions, and summary). Its query is an embedding of the requested context plus saved preferences. It ranks structurally valid candidate outfits by cosine similarity only; it is intentionally not a raw-image-vector search and does not apply the hybrid engine's weather, occasion, color, compatibility, or diversity scores. The current hybrid model also makes one context-embedding request per recommendation, then performs its candidate generation and scoring locally; the comparison report records both methods' embedding input tokens.
@@ -97,7 +97,7 @@ Create a two-sheet Excel workbook for blinded clothing labels and outfit judgmen
 
 ```bash
 cd backend
-/opt/anaconda3/bin/python -m app.human_eval_workbook \
+/opt/anaconda3/bin/python -m tools.evaluation.human_eval_workbook \
   --user-id YOUR_SUPABASE_USER_ID \
   --outfit-count 100
 ```
@@ -115,7 +115,7 @@ iOS item details show only the editable Occasion multi-select; model scores and 
 To inspect raw occasion suitability scores on a reproducible sample of local photos, run from `backend/`:
 
 ```bash
-python scripts/evaluate_occasion_scores.py --images ../closet_picture --count 10 --seed 42
+python -m tools.evaluation.evaluate_occasion_scores --images ../closet_picture --count 10 --seed 42
 ```
 
 This sends the sampled photos to the configured OpenAI vision model using the production prompt and image detail setting. It writes an image report, all scores as CSV, and normalized results as JSON under the project-root `evaluation/occasion_samples/`. The report applies no threshold and does not update closet records. Each photo is sent once; API errors stop the run without substituting heuristic results.
@@ -128,19 +128,19 @@ From `backend/`:
 
 ```bash
 # Preview the affected item IDs without changes.
-python -m app.reset_recognition --user-id YOUR_SUPABASE_USER_ID --dry-run
+python -m tools.admin.reset_recognition --user-id YOUR_SUPABASE_USER_ID --dry-run
 
 # Mode 1 (default): keep manually corrected items unchanged.
-python -m app.reset_recognition --user-id YOUR_SUPABASE_USER_ID --keep-manual
+python -m tools.admin.reset_recognition --user-id YOUR_SUPABASE_USER_ID --keep-manual
 
 # Mode 2: reset every item, including manually corrected items.
-python -m app.reset_recognition --user-id YOUR_SUPABASE_USER_ID --include-manual
+python -m tools.admin.reset_recognition --user-id YOUR_SUPABASE_USER_ID --include-manual
 
 # Or test only 10 items, oldest first.
-python -m app.reset_recognition --user-id YOUR_SUPABASE_USER_ID --limit 10
+python -m tools.admin.reset_recognition --user-id YOUR_SUPABASE_USER_ID --limit 10
 
 # Restart the worker with the desired model/detail/threshold settings.
-python -m app.worker
+python -m workers.recognition
 ```
 
 - The user UUID is mandatory; other users are untouched. Supabase mode requires the existing service-role credentials for administrative writes. The command uses the same repository configuration as the backend.
@@ -156,7 +156,7 @@ python -m app.worker
 Keep the worker running in terminal A. In terminal B, watch the latest reset for the user:
 
 ```bash
-python -m app.recognition_progress --user-id YOUR_SUPABASE_USER_ID --watch
+python -m tools.admin.recognition_progress --user-id YOUR_SUPABASE_USER_ID --watch
 ```
 
 The command refreshes every 5 seconds and exits with an explicit completion message only when every item in that batch has a completed job. Omit `--watch` for one snapshot, or add `--run-id RESET_BATCH_UUID` to select an older batch. `Ctrl+C` stops monitoring only. Waiting retries are counted as unfinished; permanent failures, missing/replaced jobs, and incomplete resets prevent an all-complete result. Exit code 2 means the batch needs attention; lookup errors return 1. Job completion includes the pipeline's heuristic fallback, so this measures processing completion rather than vision accuracy.
@@ -169,7 +169,7 @@ Run on the machine containing `data/recognition_resets/` for this reset. New bat
 
 Current overrides live in `clothing_items.metadata.occasion_overrides` as `{ "added": [...], "removed": [...] }`. Re-adding a removed label clears its removal and records an explicit addition; removing an added label does the reverse. Model scores are never changed by an edit. Threshold-only changes create no manual-edit event. Both fields are existing JSONB columns; no SQL migration or historical event rewrite is needed.
 
-iOS and web send optional `occasion_before` and `occasion_threshold_at_edit` with saves. The backend validates the snapshot against the existing item at that threshold; conflicting selections return HTTP 409 before writes. Clients without snapshots use the server's current effective selection as the baseline. `--keep-manual` preserves edited items and overrides; `--include-manual` clears active overrides as part of resetting the item, while retaining audit history.
+iOS send optional `occasion_before` and `occasion_threshold_at_edit` with saves. The backend validates the snapshot against the existing item at that threshold; conflicting selections return HTTP 409 before writes. Clients without snapshots use the server's current effective selection as the baseline. `--keep-manual` preserves edited items and overrides; `--include-manual` clears active overrides as part of resetting the item, while retaining audit history.
 
 ### Per-user, per-occasion thresholds
 
@@ -179,41 +179,41 @@ From `backend/`:
 
 ```bash
 # Show this user's resolved thresholds.
-python -m app.occasion_thresholds --user-id USER_UUID
+python -m tools.evaluation.occasion_thresholds --user-id USER_UUID
 
 # Change selected thresholds. Other occasions and users retain their settings.
-python -m app.occasion_thresholds --user-id USER_UUID --set Everyday=0.85 --set Work=0.7
+python -m tools.evaluation.occasion_thresholds --user-id USER_UUID --set Everyday=0.85 --set Work=0.7
 
 # Reset every threshold for this user to 0.8, and refresh stored labels.
-python -m app.occasion_thresholds --user-id USER_UUID --reset-defaults --reapply
+python -m tools.evaluation.occasion_thresholds --user-id USER_UUID --reset-defaults --reapply
 
 # Preview/reapply current policy to all stored scores, without another model call.
-python -m app.occasion_thresholds --user-id USER_UUID --reapply --dry-run
-python -m app.occasion_thresholds --user-id USER_UUID --reapply
+python -m tools.evaluation.occasion_thresholds --user-id USER_UUID --reapply --dry-run
+python -m tools.evaluation.occasion_thresholds --user-id USER_UUID --reapply
 ```
 
-The API reads preferences on each request, and the worker reads them per job, so policy edits require no process restart once this code is deployed. iOS/web edit snapshots include the complete map (`occasion_thresholds_at_edit`); audit records store `thresholds_at_edit`, with the legacy scalar `threshold_at_edit` set to null when thresholds differ. New recognition snapshots store `occasion_thresholds`; full raw scores are unchanged.
+The API reads preferences on each request, and the worker reads them per job, so policy edits require no process restart once this code is deployed. iOS edit snapshots include the complete map (`occasion_thresholds_at_edit`); audit records store `thresholds_at_edit`, with the legacy scalar `threshold_at_edit` set to null when thresholds differ. New recognition snapshots store `occasion_thresholds`; full raw scores are unchanged.
 
 `--reapply` updates only `clothing_items.occasion`, backs up affected items under `data/occasion_reapplications/`, skips pending/unscored items, and preserves manual overrides and historical recognition records. It rechecks items before updating and reports changed/deleted records as conflicts; run while other writers are idle because this is not an atomic bulk transaction. No SQL migration is required. The future learning algorithm can read the manual edit events and call `update_user_thresholds`; automatic learning is not enabled yet.
 
 ## Retained evaluation results
 
 Evaluation artifacts now live in [`../evaluation/`](../evaluation/README.md), outside the backend:
-- `single_occasion/annotation.xlsx` and `single_occasion/analysis/`: original single-label workbook and evaluation.
-- `multi_occasion/annotation.xlsx` and `multi_occasion/analysis/`: current recognition scores with the any-match occasion hit rule.
-- `comparison_runs/20260921-133521/`: latest retained comparison run, including local report images.
+- `recognition/single_occasion/`: original single-label workbook and evaluation.
+- `recognition/multi_occasion/`: current recognition scores with the any-match occasion hit rule.
+- `outfits/comparison_runs/20260921-133521/`: retained comparison run, including local report images.
 
 Evaluation commands still run from `backend/` because they use application services. New workbook drafts default to `evaluation/drafts/` at the project root. All other evaluation generators also default to the project-root evaluation directory. Recompute the retained multi-occasion analysis with:
 
 ```bash
-python -m app.analyze_human_eval --workbook ../evaluation/multi_occasion/annotation.xlsx --output-dir ../evaluation/multi_occasion/analysis
+python -m tools.evaluation.analyze_human_eval --workbook ../evaluation/recognition/multi_occasion/annotation.xlsx --output-dir ../evaluation/recognition/multi_occasion/analysis
 ```
 
 ## Personal outfit library
 
 Closet now supports **Items / Outfits**, an item membership filter and outfit details. Outfit quality is evaluated independently of weather and occasion. Models, prompts, thresholds and generation limits live in [`app/outfits/config.json`](app/outfits/config.json); see the [outfit library guide](app/outfits/README.md) for version semantics and commands.
 
-Apply `sql/migrations/007_outfit_library.sql` in Supabase before using the new endpoints, then run `python -m app.outfit_worker` alongside the API and recognition worker. Tap **Build outfit library** once to enroll the user; future ready items are queued automatically by that worker. No model calls run inside a frontend request. This initial library does not replace the existing recommendation engine yet.
+Apply `sql/migrations/007_outfit_library.sql` in Supabase before using the new endpoints, then run `python -m workers.outfits` alongside the API and recognition worker. Tap **Build outfit library** once to enroll the user; future ready items are queued automatically by that worker. No model calls run inside a frontend request. This initial library does not replace the existing recommendation engine yet.
 
 ### User-confirmed item labels
 
@@ -335,7 +335,8 @@ automatically sent for paid model review.
 ### Outfit run accounting and retention (migration 009)
 
 Apply 008 and then 009 before running this backend revision. See
-[数据架构与技术说明](../docs/DATA_ARCHITECTURE.zh-CN.md) for rollout and CLI commands.
+See the [database guide](../docs/architecture/database.md) and
+[migration instructions](sql/migrations/README.md) for rollout and maintenance commands.
 New generation batches freeze the model/prompt/config once. Each model request has its own
 usage entry, including failures/unknown outcomes; cached evaluation reuse is linked without
 inventing a paid call. `outfit_run_summary` reports progress and costs. Configure optional
@@ -346,3 +347,150 @@ count reported separately. Legacy configurations remain readable for exports.
 
 Retention is preview-first. Only terminal unpinned calls' raw usage JSON becomes eligible after
 180 days; typed usage/cost counters, audit results and human correction events remain.
+
+### Resumable batch uploads
+
+`POST /api/v1/items/upload-batch` accepts optional multipart `upload_ids`: a JSON
+array containing one unique stable string per file (maximum 128 characters each).
+Clients must retain those IDs when retrying. The backend derives an item UUID from
+the authenticated owner, upload ID, and SHA-256 of the bytes. Identical retries reuse
+the item and image path; different selections or different bytes remain independent.
+The existing item primary key and atomic `create_item_with_records` RPC arbitrate
+concurrent commits. No new SQL migration is needed for this change; migration 008
+must already be installed. Older clients without IDs retain their prior behavior.
+
+Per-file failures, including a batch with zero successes, return HTTP 200 with
+`items` and `errors`. Invalid batch metadata and authentication still produce HTTP
+errors. A lost response can be retried safely with the same IDs and bytes. This is
+whole-file retry, not byte-range resumable transfer or content-based deduplication
+across separate user selections.
+
+iOS persists prepared image bytes and their IDs in an account-scoped Application
+Support queue before sending. Confirmed files are removed after each response;
+unknown/failed files survive app restarts and can be retried with **Retry pending
+uploads**. Queue files use iOS file protection and are excluded from backup. Uploads
+do not continue while the app is terminated, and reinstalling the app removes its
+queue. Keep the pending queue rather than reselecting the same photos to avoid
+creating a new logical upload.
+
+Storage transport retries reuse the same object path. Do not immediately delete
+an object after a database exception: the transaction may have committed before
+its response was lost. Retrying reconciles this situation, but permanently abandoned
+uploads can still leave unreferenced objects; automated orphan cleanup is not yet
+implemented. Recognition workers now survive claim/processing database exceptions;
+persisted leases remain available for normal timeout recovery. Terminal failed jobs
+still require explicit intervention after their configured attempt limit.
+
+### Required footwear and optional accessories
+
+The current outfit configuration sets `require_shoes: true`: a complete base is
+upper/lower clothing (including necessary coverage layers) or a one-piece outfit,
+plus exactly one supplied pair of shoes. Footwear is retained in the core and its
+ID participates in base deduplication. A different shoe produces a different
+complete base; changing optional hats/scarves/sunglasses does not.
+
+Candidate retrieval reserves a footwear candidate before filling optional slots.
+When no compatible recognized shoes are available, an anchor completes without
+calling the generation model. The model cannot invent missing footwear. Local
+validation rejects shoeless proposals even when the provider returns them.
+
+Different accessory types can coexist (for example hat + scarf + sunglasses),
+but duplicate types and multiple bags are rejected. ALL removable additions,
+including accessories, must pass the existing `optional_layering` review with
+`clear_improvement`, plus full-outfit compatibility. Every extra piece must visibly
+contribute; merely matching or being useful is insufficient. This is a categorical
+visual comparison against the complete base, not a new numerical aesthetic cutoff.
+The full-outfit cap is now six items so a three-piece base can accommodate up to
+three optional pieces; necessary layers also count toward the cap.
+
+Prompt and policy keys invalidate generation/review caches and the current display
+projection. Existing historical evaluations remain stored; under the current
+policy, shoeless combinations are not displayed as complete outfits. Archived
+experiment source files are unchanged. Run snapshots without `require_shoes`
+retain the previous false default. Apply existing database migrations, restart the
+API and outfit worker, and rebuild the projection if an immediate display refresh
+is needed. No new SQL migration is required. Running the worker under this policy
+can enqueue new generation jobs and incur model charges.
+
+### Clothing-first footwear pipeline
+
+Current configuration enables `footwear_pipeline`. The older joint generation path
+and archived experiments remain available; run snapshots without the new setting
+use the older path. The new sequence is:
+
+1. Generate at most eight clothing combinations from clothing images and labels,
+   without shoe images or shoe IDs. Reserve one item slot for mandatory footwear.
+2. For each distinct valid clothing combination, rank footwear against ALL core
+   garments and shortlist up to eight shoes with diversity across shoe subtypes.
+3. A separate image-based selector compares those candidates, describing material,
+   thermal use, shaft height, visual weight, purpose, and evidence. It may return
+   no suitable shoe. These descriptors are per-evaluation evidence, not calibrated
+   measurements or silently overwritten recognition labels.
+4. An independent image call reviews the selected shoe against the clothing and
+   alternatives. It receives no selection reasoning. Thermal coherence, formality,
+   proportions, material balance, and comparison must all pass. Any uncertainty,
+   failure, or clearly better supplied candidate blocks admission.
+5. Run the existing complete-outfit visual review, retaining its higher bar for
+   optional accessories/layers. A bad optional addition does not invalidate a good
+   clothing-and-shoes base.
+
+There is no blanket ban on skirts with snow boots: a winter knit/wool ensemble can
+work, while delicate summer skirts and formal office outfits require different
+footwear. Suitability is evaluated from images, not the broad Boots label alone.
+A shoe anchor is compared with alternatives, never forced into an outfit. Only
+results actually containing it are saved for its job.
+
+`footwear_catalog_limit`, selection/review models, and the three new prompt files
+are replaceable configuration. Call accounting uses existing `generation` stages
+for clothing generation/footwear selection and `evaluation` for independent shoe
+review/full review. Payload `footwear` links the exact selection/review call IDs,
+profiles, candidate IDs, and shoe-pool revision. Rejected selections/reviews are
+preserved in bounded per-job `stats.footwear_rejections`. No new SQL migration is
+required (008/009 must already be installed).
+
+Adding/editing/deleting a ready shoe changes the comparison pool and creates new
+job identities; previous comparisons are not silently reused against different
+alternatives. This can enqueue a new pass over existing garments. Historical rows
+remain stored, but the new projection admits only results with matching footwear
+review evidence and the current shoe pool. Projection refresh is eventually
+consistent. The candidate shortlist is not an exhaustive wardrobe comparison.
+
+Worst-case model calls are one clothing-generation call plus three calls per
+unique proposal (selection, shoe review, full review): 25 for eight proposals,
+before retries. Rejection and matching review caches reduce actual calls. The
+lease default is 3600 seconds to cover these stages; increasing concurrency does
+not reduce total model usage. Restart the API and outfit worker after updating
+Python configuration fields. This source change does not itself run a paid batch.
+
+### Safe outfit error diagnostics
+
+Apply `sql/migrations/010_outfit_error_diagnostics.sql` **before restarting the outfit worker**. This additive migration creates `outfit_model_calls.diagnostics`; it does not requeue jobs. Failed jobs also carry `stats.error_diagnostics`. Call records distinguish clothing generation, footwear selection, footwear review, and full outfit review. HTTP failures retain status, an allowlisted provider code (otherwise `unknown`), and a validated request ID. Exception messages, response bodies, prompts, credentials, and image URLs are excluded. Existing failed calls cannot be retroactively diagnosed. Retry behavior is unchanged; applying this migration does not retry the 145 failed jobs.
+
+### Yoga pants taxonomy
+
+`Activewear / Yoga Pants` covers yoga-specific fitted, straight, flared and wide-leg pants. `Workout Leggings` remains for general exercise leggings. The existing `fit` field carries silhouette (`Skinny`, `Straight-leg`, `Flared`, `Wide-leg`) and is included in embedding input and visual outfit context. Yoga pants occupy a bottom slot in outfits; wide-leg/flared pairs cannot serve as a leggings-like lower inner layer. Explicit yoga subtype labels normalize to Activewear, but ordinary wide-leg pants and joggers are not automatically relabeled. iOS reads the new subtype from the backend taxonomy. No schema migration or automatic relabeling of existing garments is included. Updated outfit prompts change generation/evaluation keys: an active/restarted outfit worker can enqueue work for the new version; keep it stopped if generation should remain paused.
+
+If item deletion fails with `23503` on `outfit_model_calls_job_id_fkey`, apply migration `011_outfit_call_job_delete.sql`. Garment deletion already cascades to build jobs; model call history now survives with a null job reference. Run ownership and usage/cost counters remain intact. In-flight calls may finish after deletion, but new calls still require a valid job lease and stale outfit publication remains guarded. Interrupted detached calls become `unknown` through normal recovery rather than being counted as free. Applying this migration does not delete any garments or restart failed tasks.
+
+### Recognition failure and label confirmation
+
+Queued image recognition requires vision; unavailable/failed vision no longer completes with filename heuristics. The existing durable queue retries failures up to its configured attempt limit. Item state remains `queued`/`Analyzing` during retries, then becomes `failed`/`Recognition Failed`. Safe error details are stored in `recognition_jobs.last_error` and item metadata without raw exception messages or URLs. Opening pending, failed, heuristic-fallback or uncategorized cards does not confirm placeholder labels; explicit manual edits remain supported. Existing completed fallback records are not automatically reset or retried by this change. Restart API and recognition worker and rebuild iOS to activate; no database migration is required for this change.
+
+### Current pipeline: combined accessory selection (supersedes independent shoe review)
+
+With `accessory_pipeline=true`, the stages are clothing generation, **one combined shoe/accessory selection per proposal**, then **one whole-outfit visual review**. No independent shoe review is called. Exactly one suitable shoe is required; hats, scarves, sunglasses and bags are optional and are published only when the whole-outfit review finds clear improvement over the core including shoes. An unsuitable shoe rejects the core; an unhelpful optional accessory can be omitted without rejecting a good core. Hosiery/required clothing coverage stays in the clothing stage.
+
+`footwear_selection_model` controls the combined selector; `accessory_selection_prompt` and `accessory_catalog_limit` control its prompt and non-shoe shortlist. `footwear_catalog_limit` still controls shoes. Maximum calls at eight proposals are `1 + 8 * 2 = 17` before retries, versus 25 previously; this is a call-count reduction, not a guaranteed cost reduction. Previous run snapshots retain `accessory_pipeline=false` and the historical path. No new migration is needed beyond existing diagnostics migration 010. Restarting the outfit worker loads the new configuration and can automatically queue the new version for enrolled users; no worker is started by changing source files.
+## Taste learning workers
+
+Apply `sql/migrations/017_taste_profile_learning.sql`, then
+`sql/migrations/018_free_text_taste_summary.sql`. Run the deterministic projector with
+`make taste-profile-worker`. Optional feedback notes are summarized by a separate
+`make free-text-taste-worker` process only after 10 pending notes; each call handles at
+most 50 notes and writes provider usage to `taste_summary_runs`. Submitting feedback
+does not call a model, and neither worker regenerates previously completed outfits.
+
+Outfit generation receives explicit soft Taste guidance and enforces one exploration
+proposal in the normal eight-proposal request. Final image review receives the same
+clothing Taste context. Shoe, bag and accessory preferences are retained only as raw
+evidence in this release and do not affect personalization.

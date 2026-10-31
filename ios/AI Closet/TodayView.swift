@@ -21,11 +21,19 @@ struct TodayView: View {
                 }
                 .padding(16)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .outfitWearChanged)) { _ in
+                Task { await viewModel.refreshTodaySelection(token:await authStore.validAccessToken()) }
+            }
             .navigationTitle(appSettings.text("tab.today"))
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
-                        Task { await viewModel.submitCityQuery(token: await authStore.validAccessToken()) }
+                        Task {
+                            await viewModel.submitCityQuery(
+                                token: await authStore.validAccessToken(),
+                                occasion: selectedTodayOccasion
+                            )
+                        }
                     } label: {
                         if viewModel.isRefreshingToday {
                             ProgressView()
@@ -37,11 +45,16 @@ struct TodayView: View {
                 }
             }
             .refreshable {
-                await viewModel.submitCityQuery(token: await authStore.validAccessToken())
+                await viewModel.submitCityQuery(
+                    token: await authStore.validAccessToken(),
+                    occasion: selectedTodayOccasion
+                )
             }
             .task {
-                await viewModel.bootstrapToday(token: await authStore.validAccessToken())
+                let token = await authStore.validAccessToken()
+                await viewModel.loadTaxonomy(token: token)
                 syncTodayOccasion()
+                await viewModel.bootstrapToday(token: token, occasion: selectedTodayOccasion)
             }
             .onAppear {
                 syncTodayOccasion()
@@ -82,7 +95,10 @@ struct TodayView: View {
                                 .onSubmit {
                                     Task {
                                         cityFieldFocused = false
-                                        await viewModel.submitCityQuery(token: await authStore.validAccessToken())
+                                        await viewModel.submitCityQuery(
+                                            token: await authStore.validAccessToken(),
+                                            occasion: selectedTodayOccasion
+                                        )
                                         isEditingCity = false
                                     }
                                 }
@@ -90,7 +106,10 @@ struct TodayView: View {
                             Button(appSettings.text("today.update")) {
                                 Task {
                                     cityFieldFocused = false
-                                    await viewModel.submitCityQuery(token: await authStore.validAccessToken())
+                                    await viewModel.submitCityQuery(
+                                        token: await authStore.validAccessToken(),
+                                        occasion: selectedTodayOccasion
+                                    )
                                     isEditingCity = false
                                 }
                             }
@@ -153,7 +172,10 @@ struct TodayView: View {
                         viewModel.applyCitySuggestion(suggestion)
                         Task {
                             cityFieldFocused = false
-                            await viewModel.submitCityQuery(token: await authStore.validAccessToken())
+                            await viewModel.submitCityQuery(
+                                token: await authStore.validAccessToken(),
+                                occasion: selectedTodayOccasion
+                            )
                         }
                     } label: {
                         Text(suggestion)
@@ -176,7 +198,7 @@ struct TodayView: View {
                 .textCase(.uppercase)
                 .foregroundStyle(.secondary)
             Picker(appSettings.text("today.occasion"), selection: $selectedTodayOccasion) {
-                ForEach(ClosetSelectionSupport.plannerOccasions, id: \.self) { occasion in
+                ForEach(viewModel.taxonomy.occasions, id: \.self) { occasion in
                     Text(appSettings.option(occasion)).tag(occasion)
                 }
             }
@@ -243,13 +265,42 @@ struct TodayView: View {
     @ViewBuilder
     private var recommendationSection: some View {
         let recommendations = viewModel.todayRecommendations
-        if let active = viewModel.activeTodayRecommendation {
+        if let selected=viewModel.selectedTodayRecommendation {
             APIOutfitRecommendationCard(
+                surface:.today,isSelectedToday:true,recommendation:selected,index:0,total:1,
+                onPrevious:{},onNext:{},
+                onDisliked:{},
+                onWorn:{ Task { await viewModel.selectForToday(selected,token:await authStore.validAccessToken()) } },
+                onWearUndone:{ Task { await viewModel.clearTodaySelection(token:await authStore.validAccessToken()) } }
+            )
+            Button {
+                Task { await viewModel.refreshTodayRecommendations(token:await authStore.validAccessToken(),occasion:selectedTodayOccasion) }
+            } label: {
+                Label("Regenerate alternatives",systemImage:"arrow.clockwise").frame(maxWidth:.infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(viewModel.isLoadingTodayRecommendations)
+            if let active=viewModel.activeTodayRecommendation {
+                Text("Alternatives").font(.headline)
+                APIOutfitRecommendationCard(
+                    surface:.today,recommendation:active,index:viewModel.activeIndex,total:recommendations.count,
+                    onPrevious:{ viewModel.move(-1,count:recommendations.count) },
+                    onNext:{ viewModel.move(1,count:recommendations.count) },
+                    onDisliked:{ viewModel.removeTodayRecommendation(id:active.id) },
+                    onWorn:{ Task { await viewModel.selectForToday(active,token:await authStore.validAccessToken()) } },
+                    onWearUndone:{ Task { await viewModel.clearTodaySelection(token:await authStore.validAccessToken()) } })
+            }
+        } else if let active = viewModel.activeTodayRecommendation {
+            APIOutfitRecommendationCard(
+                surface: .today,
                 recommendation: active,
                 index: viewModel.activeIndex,
                 total: recommendations.count,
                 onPrevious: { viewModel.move(-1, count: recommendations.count) },
-                onNext: { viewModel.move(1, count: recommendations.count) }
+                onNext: { viewModel.move(1, count: recommendations.count) },
+                onDisliked: { viewModel.removeTodayRecommendation(id: active.id) },
+                onWorn: { Task { await viewModel.selectForToday(active,token:await authStore.validAccessToken()) } },
+                onWearUndone: { Task { await viewModel.clearTodaySelection(token:await authStore.validAccessToken()) } }
             )
             .id(active.id)
             .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .move(edge: .leading).combined(with: .opacity)))
@@ -260,7 +311,7 @@ struct TodayView: View {
             ContentUnavailableView(
                 viewModel.todayRecommendationErrorMessage == nil ? appSettings.text("today.no_recommendations") : appSettings.text("today.recommendations_unavailable"),
                 systemImage: "sparkles",
-                description: Text(viewModel.todayRecommendationErrorMessage.map(appSettings.resolvedText) ?? appSettings.text("today.recommendations_empty"))
+                description: Text(viewModel.todayRecommendationErrorMessage.map(appSettings.resolvedText) ?? "Save outfits in Closet first. Items worn within the last 48 hours are excluded from recommendations.")
             )
         }
     }

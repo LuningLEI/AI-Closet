@@ -12,6 +12,7 @@ def repository(tmp_path: Path) -> ClosetRepository:
     repo = ClosetRepository(items_path=tmp_path / "items.json")
     repo.recognition_records_path = tmp_path / "recognition_records.json"
     repo.recognition_jobs_path = tmp_path / "recognition_jobs.json"
+    repo.item_edit_events_path = tmp_path / "item_edit_events.json"
     repo.item_feature_snapshots_path = tmp_path / "item_feature_snapshots.json"
     repo.user_preferences_path = tmp_path / "user_preferences.json"
     return repo

@@ -1,37 +1,33 @@
 from __future__ import annotations
 
-import httpx
+from typing import Any
 
+from app.ai.gateway import AIGateway, build_ai_gateway
 from app.core.config import settings
 from app.core.constants import OPENAI_EMBEDDING_TIMEOUT_SECONDS
 from app.models.domain import ClothingItemRecord, RecommendationContext
 
 
 class EmbeddingService:
+    def __init__(self, gateway: AIGateway | None = None) -> None:
+        self.gateway = gateway or build_ai_gateway()
+
     def create_embedding(self, text: str) -> list[float] | None:
-        if not settings.openai_api_key:
-            return None
+        embedding, _ = self.create_embedding_with_usage(text)
+        return embedding
+
+    def create_embedding_with_usage(self, text: str) -> tuple[list[float] | None, dict[str, Any] | None]:
+        if not settings.ai_api_key:
+            return None, None
 
         try:
-            response = httpx.post(
-                "https://api.openai.com/v1/embeddings",
-                headers={
-                    "Authorization": f"Bearer {settings.openai_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": settings.openai_embedding_model,
-                    "input": text,
-                    "dimensions": settings.openai_embedding_dimensions,
-                },
-                timeout=OPENAI_EMBEDDING_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
-            payload = response.json()
-            return [float(value) for value in payload["data"][0]["embedding"]]
+            return self.gateway.embedding(model=settings.openai_embedding_model, text=text,
+                                          dimensions=settings.openai_embedding_dimensions,
+                                          timeout=OPENAI_EMBEDDING_TIMEOUT_SECONDS)
         except Exception as error:
-            print("OPENAI EMBEDDING FAILED:", error)
-            return None
+            from app.core.observability import log_event
+            log_event("ai.embedding_failed", provider=settings.ai_provider, error=type(error).__name__)
+            return None, None
 
 
 def item_embedding_text(item: ClothingItemRecord) -> str:
@@ -40,6 +36,7 @@ def item_embedding_text(item: ClothingItemRecord) -> str:
         for value in [
             f"category: {item.category}",
             f"subtype: {item.subtype or 'none'}",
+            f"fit: {item.fit}" if item.fit else "",
             f"color: {item.color}",
             f"season: {item.season}",
             f"style: {item.style}",

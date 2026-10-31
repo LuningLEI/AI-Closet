@@ -1,8 +1,6 @@
 import SwiftUI
 
 enum ClosetSelectionSupport {
-    static let plannerOccasions = ["Everyday", "Work", "School", "Date", "Party", "Travel", "Formal", "Workout"]
-
     static func needsBorder(for colorName: String) -> Bool {
         ["white", "ivory", "cream", "beige", "yellow"].contains(normalizedColorName(colorName))
     }

@@ -12,8 +12,16 @@ final class ProfileViewModel: ObservableObject {
     @Published var genderIdentity = "Prefer not to say"
     @Published var dailyOccasions: [String] = []
     @Published var stylePreferences: [String] = []
+    @Published var occasionStylePreferences: [String: [String]] = [:]
     @Published var selectedCategories: [String] = []
     @Published var customCategories: [String] = []
+    @Published var catalogSubtypes: [String:[String]] = [:]
+    @Published var catalogColors: [String] = []
+    @Published var catalogStyles: [String] = []
+    @Published var catalogOccasions: [String] = []
+    @Published var catalogSeasons: [String] = []
+    @Published var catalogLengths: [String] = []
+    @Published var catalogSleeveLengths: [String] = []
     @Published var modelTrainingConsent = false
     @Published var isLoading = false
     @Published var errorMessage: String?
@@ -31,6 +39,8 @@ final class ProfileViewModel: ObservableObject {
         do {
             let response: UserPreferencesDTO = try await apiClient.get("/api/v1/preferences", token: token)
             apply(response)
+            let taxonomy:TaxonomyDTO = try await apiClient.get("/api/v1/taxonomy",token:token)
+            apply(taxonomy)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -39,6 +49,7 @@ final class ProfileViewModel: ObservableObject {
     func save(token: String?, onboardingCompleted: Bool? = nil) async {
         errorMessage = nil
         do {
+            reconcileOccasionStyles()
             let request = UserPreferencesUpdateRequestDTO(
                 profileVersion: preferences?.profileVersion,
                 taxonomyVersion: preferences?.taxonomyVersion,
@@ -50,8 +61,13 @@ final class ProfileViewModel: ObservableObject {
                 genderIdentity: genderIdentity,
                 dailyOccasions: dailyOccasions,
                 stylePreferences: stylePreferences,
+                occasionStylePreferences: occasionStylePreferences,
                 selectedCategories: selectedCategories,
                 customCategories: customCategories,
+                taxonomyCustomizations: TaxonomyCustomizationsDTO(
+                    subtypes:catalogSubtypes,colors:catalogColors,styles:catalogStyles,
+                    occasions:catalogOccasions,seasons:catalogSeasons,lengths:catalogLengths,
+                    sleeveLengths:catalogSleeveLengths),
                 modelTrainingConsent: modelTrainingConsent,
                 defaultLocationLabel: preferences?.defaultLocationLabel,
                 defaultLatitude: preferences?.defaultLatitude,
@@ -85,9 +101,52 @@ final class ProfileViewModel: ObservableObject {
         genderIdentity = response.genderIdentity ?? "Prefer not to say"
         dailyOccasions = response.dailyOccasions.isEmpty ? ["Everyday"] : response.dailyOccasions
         stylePreferences = response.stylePreferences.isEmpty ? ["Casual"] : response.stylePreferences
-        selectedCategories = response.selectedCategories.isEmpty ? Self.defaultCategories : response.selectedCategories
+        occasionStylePreferences = response.occasionStylePreferences ?? Dictionary(
+            uniqueKeysWithValues: dailyOccasions.map { ($0, stylePreferences) }
+        )
+        reconcileOccasionStyles()
+        selectedCategories = response.selectedCategories
         customCategories = response.customCategories
+        if let custom=response.taxonomyCustomizations {
+            catalogSubtypes=custom.subtypes ?? catalogSubtypes
+            catalogColors=custom.colors ?? catalogColors
+            catalogStyles=custom.styles ?? catalogStyles
+            catalogOccasions=custom.occasions ?? catalogOccasions
+            catalogSeasons=custom.seasons ?? catalogSeasons
+            catalogLengths=custom.lengths ?? catalogLengths
+            catalogSleeveLengths=custom.sleeveLengths ?? catalogSleeveLengths
+        }
         modelTrainingConsent = response.modelTrainingConsent
+    }
+
+    private func apply(_ taxonomy:TaxonomyDTO) {
+        ClothingTaxonomySupport.install(taxonomy)
+        selectedCategories=taxonomy.categories
+        catalogSubtypes=taxonomy.subtypes
+        catalogColors=taxonomy.colors
+        catalogStyles=taxonomy.styles
+        catalogOccasions=taxonomy.occasions
+        catalogSeasons=taxonomy.seasons
+        catalogLengths=taxonomy.lengths
+        catalogSleeveLengths=taxonomy.sleeveLengths
+        reconcileOccasionStyles()
+    }
+
+    func reconcileOccasionStyles() {
+        let fallback = stylePreferences.isEmpty ? [catalogStyles.first ?? "Casual"] : stylePreferences
+        var normalized: [String: [String]] = [:]
+        for occasion in dailyOccasions {
+            let current = occasionStylePreferences.first(where: { $0.key.caseInsensitiveCompare(occasion) == .orderedSame })?.value ?? fallback
+            let cleaned = current.reduce(into: [String]()) { values, style in
+                let value = style.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !value.isEmpty, !values.contains(value) { values.append(value) }
+            }
+            normalized[occasion] = cleaned.isEmpty ? [catalogStyles.first ?? "Casual"] : cleaned
+        }
+        occasionStylePreferences = normalized
+        stylePreferences = dailyOccasions.flatMap { normalized[$0] ?? [] }.reduce(into: [String]()) {
+            if !$0.contains($1) { $0.append($1) }
+        }
     }
 
     private static func normalizedJPEGData(from data: Data) -> Data {
@@ -98,8 +157,4 @@ final class ProfileViewModel: ObservableObject {
         return jpeg
     }
 
-    private static let defaultCategories = [
-        "Tops", "Bottoms", "Dresses", "Jumpsuits", "Sets", "Outerwear",
-        "Shoes", "Bags", "Accessories", "Activewear", "Swimwear", "Intimates", "Uncategorized"
-    ]
 }

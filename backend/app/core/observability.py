@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import os
+from collections import Counter
+from threading import Lock
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -10,6 +13,19 @@ from fastapi import Request, Response
 
 
 REQUEST_ID_HEADER = "x-request-id"
+_metrics: Counter[tuple[str, ...]] = Counter()
+_metrics_lock = Lock()
+
+
+def increment_metric(name: str, **labels: str) -> None:
+    key = (name, *(f"{key}={value}" for key, value in sorted(labels.items())))
+    with _metrics_lock:
+        _metrics[key] += 1
+
+
+def metrics_snapshot() -> dict[str, int]:
+    with _metrics_lock:
+        return {"|".join(key): value for key, value in _metrics.items()}
 
 
 def log_event(event: str, **payload) -> None:
@@ -18,6 +34,7 @@ def log_event(event: str, **payload) -> None:
             {
                 "event": event,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
+                "service": os.getenv("SERVICE_NAME", "ai-closet-api"),
                 **payload,
             },
             default=str,
@@ -56,6 +73,8 @@ async def observe_request(request: Request, call_next) -> Response:
         raise
     finally:
         elapsed_ms = round((time.monotonic() - started_at) * 1000, 2)
+        increment_metric("http_requests_total", method=request.method, path=request.url.path,
+                         status=str(status_code))
         log_event(
             "http.request",
             request_id=request_id,

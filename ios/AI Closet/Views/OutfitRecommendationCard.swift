@@ -1,42 +1,63 @@
 import SwiftUI
 
 struct APIOutfitRecommendationCard: View {
+    @State private var editedItems: [ClothingItemDTO]?
+    var surface: OutfitActionSurface = .recommendations
+    var isSelectedToday = false
     let recommendation: OutfitRecommendationDTO
     let index: Int
     let total: Int
     let onPrevious: () -> Void
     let onNext: () -> Void
+    var onDisliked: () -> Void = {}
+    var onWorn: () -> Void = {}
+    var onWearUndone: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Match score \(Int(recommendation.score.rounded()))")
-                        .font(.caption.weight(.bold))
-                        .textCase(.uppercase)
-                        .foregroundStyle(.blue)
+                    if !isSelectedToday {
+                        Text("Match score \(Int(recommendation.score.rounded()))")
+                            .font(.caption.weight(.bold))
+                            .textCase(.uppercase)
+                            .foregroundStyle(.blue)
+                    }
                     Text(recommendation.title)
                         .font(.title2.bold())
                 }
                 Spacer()
-                Text("\(index + 1) / \(total)")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color(.secondarySystemBackground), in: Capsule())
+                if !isSelectedToday {
+                    Text("\(index + 1) / \(total)")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color(.secondarySystemBackground), in: Capsule())
+                }
             }
 
+            if let original = recommendation.originalScore, let penalty = recommendation.wearPenalty, penalty > 0, editedItems == nil {
+                Text("Original \(Int(original.rounded())) − recent wear \(Int(penalty.rounded()))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if editedItems != nil { Text("Your saved version · refresh to recalculate its score").font(.caption).foregroundStyle(.secondary) }
             outfitLineup
+            OutfitActions(surface: surface, items: editedItems ?? recommendation.items,
+                          onSaved: { editedItems = $0 }, onDisliked: onDisliked,
+                          onWorn: onWorn, onWearUndone: onWearUndone)
         }
+        .onChange(of: recommendation.id) { _, _ in editedItems = nil }
         .padding(18)
         .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 22))
         .overlay(alignment: .leading) {
-            arrowButton(systemName: "chevron.left", action: onPrevious)
-                .offset(x: -18)
+            if !isSelectedToday && total > 1 {
+                arrowButton(systemName: "chevron.left", action: onPrevious).offset(x: -18)
+            }
         }
         .overlay(alignment: .trailing) {
-            arrowButton(systemName: "chevron.right", action: onNext)
-                .offset(x: 18)
+            if !isSelectedToday && total > 1 {
+                arrowButton(systemName: "chevron.right", action: onNext).offset(x: 18)
+            }
         }
         .shadow(color: .black.opacity(0.06), radius: 18, y: 10)
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: recommendation.id)
@@ -45,9 +66,9 @@ struct APIOutfitRecommendationCard: View {
     private var outfitLineup: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 12) {
-                ForEach(recommendation.items) { item in
+                ForEach(editedItems ?? recommendation.items) { item in
                     VStack(alignment: .leading, spacing: 8) {
-                        ClosetAsyncImage(url: item.imageUrl)
+                        ClosetAsyncImage(url: item.imageUrl, itemID: item.id)
                             .frame(width: 156, height: 188)
                             .clipped()
                             .clipShape(RoundedRectangle(cornerRadius: 18))

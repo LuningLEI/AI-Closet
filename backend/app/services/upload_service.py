@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from hashlib import sha256
+from uuid import NAMESPACE_URL, uuid5
+
 from fastapi import UploadFile
 
 from app.core.constants import (
@@ -24,12 +27,26 @@ class UploadService:
         self.repository = repository
         self.storage_service = storage_service
 
-    async def queue_clothing_item(self, user_id: str, file: UploadFile, base_url: str) -> ClothingItemRecord:
-        stored = await self.storage_service.store_image(file, user_id)
+    async def queue_clothing_item(self, user_id: str, file: UploadFile, base_url: str, upload_id: str | None = None) -> ClothingItemRecord:
+        # Bind retries to both owner and bytes. A new selection gets a new upload ID.
+        # No distributed lock is needed: the item primary key arbitrates concurrent commits.
+        item_id = None
+        if upload_id:
+            digest = sha256(await file.read()).hexdigest()
+            await file.seek(0)
+            item_id = str(uuid5(NAMESPACE_URL, f"closet-upload:{user_id}:{upload_id}:{digest}"))
+            existing = self.repository.get_item(item_id, user_id)
+            if existing is not None:
+                return existing
+        if item_id:
+            stored = await self.storage_service.store_image(file, user_id, object_id=item_id)
+        else:
+            stored = await self.storage_service.store_image(file, user_id)
         image_url = stored["image_url"]
         response_image_url = absolute_url(base_url, self.storage_service.signed_image_url(stored.get("image_path"))) or image_url
 
         item = ClothingItemRecord(
+            **({"id": item_id} if item_id else {}),
             user_id=user_id,
             image_url=image_url,
             image_path=stored.get("image_path"),
@@ -46,14 +63,20 @@ class UploadService:
             recognition_summary="Vision analysis is running.",
             metadata={"pipeline": PIPELINE_NAME, "recognition_status": RecognitionStatus.QUEUED},
         )
-        saved_item = self.repository.add_item(item)
-        self.repository.create_recognition_job(
-            RecognitionJobRecord(
+        job = RecognitionJobRecord(
                 user_id=user_id,
-                clothing_item_id=saved_item.id,
+                clothing_item_id=item.id,
                 filename=file.filename or "upload.jpg",
                 image_url=response_image_url,
                 image_path=stored.get("image_path"),
             )
-        )
-        return saved_item
+        try:
+            return self.repository.create_item_with_records(item, job=job)
+        except Exception:
+            # Includes a lost commit response and a competing successful insert.
+            # Never delete the object here: an uncertain commit may already reference it.
+            if item_id:
+                existing = self.repository.get_item(item_id, user_id)
+                if existing is not None:
+                    return existing
+            raise

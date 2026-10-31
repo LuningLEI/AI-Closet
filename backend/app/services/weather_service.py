@@ -64,7 +64,7 @@ class WeatherService:
                 "detail": coordinate_detail,
                 "latitude": latitude,
                 "longitude": longitude,
-                "source": WeatherSource.BROWSER_GEOLOCATION,
+                "source": WeatherSource.DEVICE_GEOLOCATION,
             }
 
         try:

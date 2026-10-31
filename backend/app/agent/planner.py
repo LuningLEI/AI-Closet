@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any
 
-import httpx
+from app.ai.gateway import AIGateway, build_ai_gateway
 
 from app.agent.intents import (
     AgentIntent,
@@ -13,12 +13,15 @@ from app.agent.intents import (
     detect_agent_intent,
 )
 from app.core.config import settings
-from app.core.constants import OPENAI_RESPONSES_URL, OPENAI_RESPONSES_TIMEOUT_SECONDS
+from app.core.constants import OPENAI_RESPONSES_TIMEOUT_SECONDS
 
 
 class AgentPlanner:
+    def __init__(self, gateway: AIGateway | None = None) -> None:
+        self.gateway = gateway or build_ai_gateway()
+
     def plan(self, message: str) -> AgentIntent:
-        if settings.openai_api_key:
+        if settings.ai_api_key:
             try:
                 return self._plan_with_openai(message)
             except Exception as error:
@@ -26,15 +29,9 @@ class AgentPlanner:
         return detect_agent_intent(message)
 
     def _plan_with_openai(self, message: str) -> AgentIntent:
-        response = httpx.post(
-            OPENAI_RESPONSES_URL,
-            headers={
-                "Authorization": f"Bearer {settings.openai_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": settings.openai_agent_planner_model,
-                "input": [
+        result = self.gateway.response(
+            model=settings.openai_agent_planner_model,
+            input=[
                     {
                         "role": "system",
                         "content": [
@@ -54,20 +51,10 @@ class AgentPlanner:
                         ],
                     },
                 ],
-                "text": {
-                    "format": {
-                        "type": "json_schema",
-                        "name": "wardrobe_agent_plan",
-                        "schema": self._planner_schema(),
-                        "strict": True,
-                    }
-                },
-            },
+            schema=self._planner_schema(), schema_name="wardrobe_agent_plan",
             timeout=OPENAI_RESPONSES_TIMEOUT_SECONDS,
         )
-        response.raise_for_status()
-        payload = response.json()
-        parsed = self._parse_response_json(payload)
+        parsed = self._parse_response_json(result.payload)
         return self._intent_from_model_output(parsed, message)
 
     def _planner_prompt(self) -> str:

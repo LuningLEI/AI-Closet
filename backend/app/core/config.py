@@ -30,7 +30,9 @@ _load_env_file()
 class Settings:
     app_name: str = os.getenv("APP_NAME", "AI Closet API")
     app_env: str = os.getenv("APP_ENV", "development")
-    web_origin: str = os.getenv("WEB_ORIGIN", "http://localhost:3000")
+    allowed_origins: tuple[str, ...] = tuple(
+        value.strip() for value in os.getenv("ALLOWED_ORIGINS", "").split(",") if value.strip()
+    )
     data_dir: Path = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data")))
     uploads_dir: Path = Path(os.getenv("UPLOADS_DIR", str(BASE_DIR / "data" / "uploads")))
     items_path: Path = Path(os.getenv("ITEMS_PATH", str(BASE_DIR / "data" / "items.json")))
@@ -39,6 +41,9 @@ class Settings:
     )
     recognition_jobs_path: Path = Path(
         os.getenv("RECOGNITION_JOBS_PATH", str(BASE_DIR / "data" / "recognition_jobs.json"))
+    )
+    item_edit_events_path: Path = Path(
+        os.getenv("ITEM_EDIT_EVENTS_PATH", str(BASE_DIR / "data" / "item_edit_events.json"))
     )
     item_feature_snapshots_path: Path = Path(
         os.getenv("ITEM_FEATURE_SNAPSHOTS_PATH", str(BASE_DIR / "data" / "item_feature_snapshots.json"))
@@ -50,11 +55,15 @@ class Settings:
     supabase_service_role_key: str | None = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or None
     supabase_storage_bucket: str = os.getenv("SUPABASE_STORAGE_BUCKET", "closet-images")
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY") or None
+    ai_provider: str = os.getenv("AI_PROVIDER", "openai-compatible")
+    ai_base_url: str = os.getenv("AI_BASE_URL", "https://api.openai.com/v1")
+    ai_api_key: str | None = os.getenv("AI_API_KEY") or os.getenv("OPENAI_API_KEY") or None
     openai_vision_model: str = os.getenv("OPENAI_VISION_MODEL", "gpt-4.1-mini")
     openai_vision_detail: str = os.getenv("OPENAI_VISION_DETAIL", "low")
     openai_agent_planner_model: str = os.getenv("OPENAI_AGENT_PLANNER_MODEL", "gpt-4.1-mini")
     openai_embedding_model: str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
     openai_embedding_dimensions: int = int(os.getenv("OPENAI_EMBEDDING_DIMENSIONS", "1536"))
+    recognition_occasion_threshold: float = float(os.getenv("RECOGNITION_OCCASION_THRESHOLD", "0.8"))
     recognition_worker_batch_size: int = int(os.getenv("RECOGNITION_WORKER_BATCH_SIZE", "3"))
     recognition_worker_poll_seconds: float = float(os.getenv("RECOGNITION_WORKER_POLL_SECONDS", "2"))
     recognition_worker_max_attempts: int = int(os.getenv("RECOGNITION_WORKER_MAX_ATTEMPTS", "3"))
@@ -62,6 +71,9 @@ class Settings:
     recognition_worker_retry_base_seconds: int = int(os.getenv("RECOGNITION_WORKER_RETRY_BASE_SECONDS", "10"))
     recognition_worker_retry_max_seconds: int = int(os.getenv("RECOGNITION_WORKER_RETRY_MAX_SECONDS", "300"))
     require_auth_for_mutations: bool = os.getenv("REQUIRE_AUTH_FOR_MUTATIONS", "true").lower() in {"1", "true", "yes"}
+    log_level: str = os.getenv("LOG_LEVEL", "INFO")
+    service_name: str = os.getenv("SERVICE_NAME", "ai-closet-api")
+    observability_token: str | None = os.getenv("OBSERVABILITY_TOKEN") or None
 
 
 settings = Settings()

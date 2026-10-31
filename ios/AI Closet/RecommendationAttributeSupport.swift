@@ -7,6 +7,7 @@ struct RecommendationProfile {
     let versatility: String
 }
 
+@MainActor
 enum RecommendationAttributeSupport {
     static func profile(for item: ClothingItem) -> RecommendationProfile {
         RecommendationProfile(
@@ -59,8 +60,10 @@ enum RecommendationAttributeSupport {
         let seasons = SeasonSelectionSupport.decode(item.season)
         let seasonCount = seasons.contains("All-Season") ? 4 : seasons.count
         let neutralColors = Set(["Black", "White", "Gray", "Navy", "Beige", "Brown"])
-        let isNeutral = neutralColors.contains(item.color)
-        let score = seasonCount + (isNeutral ? 1 : 0) + (item.occasion == "Everyday" ? 1 : 0)
+        let colors = ColorSelectionSupport.decode(item.color)
+        let isNeutral = !colors.isEmpty && colors.isSubset(of: neutralColors)
+        let occasions = OccasionSelectionSupport.decode(item.occasion, options: ClothingTaxonomySupport.occasions)
+        let score = seasonCount + (isNeutral ? 1 : 0) + (occasions.contains("Everyday") ? 1 : 0)
 
         switch score {
         case 5...:

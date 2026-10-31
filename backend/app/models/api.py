@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.core.constants import SIGNED_IMAGE_URL_EXPIRES_SECONDS
 from app.core.versions import PROFILE_VERSION, STYLE_PREFERENCE_VERSION, TAXONOMY_VERSION
@@ -45,6 +45,58 @@ class ClothingItemUpdateRequest(BaseModel):
     style: str
     occasion: str
     recognition_summary: str | None = None
+    material: str | None = None
+    length: str | None = None
+    sleeve_length: str | None = None
+    edit_source: Literal["ios", "unknown", "ios_card_open"] = "unknown"
+    occasion_before: str | None = None
+    occasion_threshold_at_edit: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    occasion_thresholds_at_edit: dict[str, float] | None = None
+
+    @field_validator('material', 'length', 'sleeve_length', mode='before')
+    @classmethod
+    def clean_details(cls, value):
+        return value.strip() or None if isinstance(value, str) else value
+
+    @model_validator(mode='before')
+    @classmethod
+    def canonical_catalog(cls, data):
+        from app.services.catalog_support import canonical_pair, canonical_occasions
+        data = dict(data)
+        data['category'],data['subtype'] = canonical_pair(data.get('category'),data.get('subtype'))
+        for key in ['occasion','occasion_before']:
+            if data.get(key) is not None:data[key]=canonical_occasions(data[key])
+        return data
+
+    @field_validator('season', mode='before')
+    @classmethod
+    def four_seasons(cls, value):
+        from app.services.season_support import normalize_user_seasons
+        return ', '.join(normalize_user_seasons(value))
+
+    @field_validator('occasion_thresholds_at_edit', mode='before')
+    @classmethod
+    def validate_occasion_thresholds(cls, value):
+        if value is None:
+            return None
+        import math
+        if not isinstance(value,dict) or not value:raise ValueError('Occasion thresholds must be a non-empty object.')
+        result={}
+        for label,threshold in value.items():
+            if not isinstance(label,str) or not label.strip() or len(label.strip())>60:
+                raise ValueError('Invalid occasion label.')
+            if isinstance(threshold,bool) or not isinstance(threshold,(int,float)) or not math.isfinite(threshold) or not 0<=threshold<=1:
+                raise ValueError('Occasion thresholds must be between zero and one.')
+            result[label.strip()]=float(threshold)
+        return result
+
+
+class ImageEditMetadata(BaseModel):
+    rotation_quarter_turns: int = Field(ge=0, le=3)
+    zoom_scale: float = Field(ge=1, le=8)
+    drag_x: float
+    drag_y: float
+    editor_side: float = Field(gt=0)
 
 
 class RecommendationsRequest(RecommendationContext):
@@ -99,8 +151,10 @@ class UserPreferencesResponse(BaseModel):
     gender_identity: str | None = None
     daily_occasions: list[str] = Field(default_factory=list)
     style_preferences: list[str] = Field(default_factory=list)
+    occasion_style_preferences: dict[str, list[str]] = Field(default_factory=dict)
     selected_categories: list[str] = Field(default_factory=list)
     custom_categories: list[str] = Field(default_factory=list)
+    taxonomy_customizations: dict[str, Any] = Field(default_factory=dict)
     model_training_consent: bool = False
     profile_features: dict[str, Any] = Field(default_factory=dict)
     default_location_label: str | None = None
@@ -121,8 +175,10 @@ class UserPreferencesUpdateRequest(BaseModel):
     gender_identity: str | None = None
     daily_occasions: list[str] | None = None
     style_preferences: list[str] | None = None
+    occasion_style_preferences: dict[str, list[str]] | None = None
     selected_categories: list[str] | None = None
     custom_categories: list[str] | None = None
+    taxonomy_customizations: dict[str, Any] | None = None
     model_training_consent: bool | None = None
     profile_features: dict[str, Any] | None = None
     default_location_label: str | None = None
@@ -130,6 +186,14 @@ class UserPreferencesUpdateRequest(BaseModel):
     default_longitude: float | None = None
     temperature_unit: str | None = None
     preferences: dict[str, Any] | None = None
+
+    @field_validator('preferences')
+    @classmethod
+    def validate_preference_thresholds(cls, value):
+        if value is not None and 'occasion_thresholds' in value:
+            from app.services.occasion_thresholds import validate_thresholds
+            validate_thresholds(value['occasion_thresholds'])
+        return value
 
 
 class QueueErrorSummary(BaseModel):
@@ -165,3 +229,5 @@ class TaxonomyResponse(BaseModel):
     occasions: list[str]
     seasons: list[str]
     subtypes: dict[str, list[str]]
+    lengths: list[str]
+    sleeve_lengths: list[str]

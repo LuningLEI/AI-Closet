@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import time
+import asyncio
+import httpx
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from fastapi import UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.constants import (
@@ -42,9 +45,9 @@ class StorageService:
             self.supabase = create_client(str(settings.supabase_url), supabase_key)
             self.using_remote_storage = True
 
-    async def store_image(self, file: UploadFile, user_id: str | None = None) -> dict[str, str]:
+    async def store_image(self, file: UploadFile, user_id: str | None = None, object_id: str | None = None) -> dict[str, str]:
         extension = Path(file.filename or "upload.jpg").suffix or ".jpg"
-        filename = f"{uuid4()}{extension.lower()}"
+        filename = f"{object_id or uuid4()}{extension.lower()}"
         storage_path = f"{user_id}/{filename}" if user_id else filename
         return await self._store_upload(file, storage_path)
 
@@ -57,17 +60,33 @@ class StorageService:
         file_content = await file.read()
 
         if self.supabase:
-            self.supabase.storage.from_(self.bucket_name).upload(
-                storage_path,
-                file_content,
-                file_options={"content-type": file.content_type or "image/jpeg"},
-            )
+            for attempt in range(3):
+                try:
+                    await run_in_threadpool(self._upload_remote, storage_path, file_content,
+                                            file.content_type or "image/jpeg")
+                    break
+                except httpx.TransportError:
+                    if attempt == 2:raise
+                    await asyncio.sleep(0.5 * (2 ** attempt))
             return {"image_url": storage_path, "image_path": storage_path}
 
         output_path = self.uploads_dir / storage_path
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(file_content)
         return {"image_url": f"/uploads/{storage_path}", "image_path": str(output_path)}
+
+    def _upload_remote(self, storage_path: str, content: bytes, content_type: str) -> None:
+        from storage3 import SyncStorageClient
+        key = settings.supabase_service_role_key or settings.supabase_key
+        headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+        # An isolated HTTP/1.1 connection avoids stale shared HTTP/2 connections.
+        # Each logical upload has a fresh UUID path. Retrying the same bytes/path
+        # is safe even when Storage committed the object but its response was lost.
+        with httpx.Client(headers=headers, http2=False, timeout=60) as client:
+            storage = SyncStorageClient(str(settings.supabase_url).rstrip('/') + '/storage/v1/',
+                                        headers=headers, http_client=client)
+            storage.from_(self.bucket_name).upload(storage_path, content,
+                file_options={"content-type": content_type, "upsert": "true"})
 
     def signed_image_url(self, image_path: str | None, expires_in: int = SIGNED_IMAGE_URL_EXPIRES_SECONDS) -> str | None:
         if not image_path:

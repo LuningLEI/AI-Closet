@@ -40,7 +40,7 @@ struct RecommendationsView: View {
                 optionMenu(
                     title: appSettings.option(viewModel.selectedOccasion)
                 ) {
-                    ForEach(ClosetSelectionSupport.plannerOccasions, id: \.self) { occasion in
+                    ForEach(viewModel.taxonomy.occasions, id: \.self) { occasion in
                         Button {
                             viewModel.selectedOccasion = occasion
                         } label: {
@@ -198,7 +198,7 @@ struct RecommendationsView: View {
             ProgressView(appSettings.text("recommendations.loading"))
                 .frame(maxWidth: .infinity, minHeight: 260)
         } else {
-            ContentUnavailableView(appSettings.text("recommendations.no_matches"), systemImage: "sparkles", description: Text(appSettings.text("recommendations.no_matches_desc")))
+            ContentUnavailableView(appSettings.text("recommendations.no_matches"), systemImage: "sparkles", description: Text("Save outfits in Closet first. Items worn within the last 48 hours are excluded from recommendations."))
         }
     }
 

@@ -16,7 +16,7 @@ final class ClothingItem {
     var category: String
     var subtype: String?
     var color: String = "Unknown"
-    var season: String = "All-Season"
+    var season: String = "Spring, Summer, Fall, Winter"
     var style: String = "Casual"
     var occasion: String = "Everyday"
     var recognitionSource: String?
@@ -32,7 +32,7 @@ final class ClothingItem {
         category: String,
         subtype: String? = nil,
         color: String = "Unknown",
-        season: String = "All-Season",
+        season: String = "Spring, Summer, Fall, Winter",
         style: String = "Casual",
         occasion: String = "Everyday",
         recognitionSource: String? = nil,

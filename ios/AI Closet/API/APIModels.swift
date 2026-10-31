@@ -3,7 +3,7 @@ import Foundation
 struct ClothingItemDTO: Identifiable, Codable, Equatable {
     let id: UUID
     let userId: String?
-    let imageUrl: String
+    var imageUrl: String
     let imagePath: String?
     let recognitionStatus: String?
     var category: String
@@ -25,15 +25,40 @@ struct ClothingItemDTO: Identifiable, Codable, Equatable {
     var recognitionSummary: String?
     var recognitionConfidence: Double?
     let createdAt: String?
+    var recognitionTags: OccasionRecognitionDTO? = nil
 
     var isRecognitionPending: Bool {
         let status = recognitionStatus?.lowercased()
         return status == "queued" || status == "processing"
     }
 
+    var isRecognitionFailed: Bool {
+        recognitionStatus?.lowercased() == "failed" ||
+        (recognitionSource == "Heuristic Fallback" && category == "Uncategorized")
+    }
+
+    var canConfirmOpeningLabels: Bool {
+        let status = recognitionStatus?.lowercased()
+        return (status == "complete" || status == "manual") &&
+            recognitionSource != "Heuristic Fallback" && recognitionSource != "Recognition Failed" &&
+            category != "Uncategorized"
+    }
+
     var displayTitle: String {
         subtype?.isEmpty == false ? subtype! : category
     }
+}
+
+struct OccasionScoreDTO: Codable, Equatable {
+    let occasion: String
+    let score: Double
+}
+
+struct OccasionRecognitionDTO: Codable, Equatable {
+    let occasionScores: [OccasionScoreDTO]?
+    let occasionThreshold: Double?
+    var displayOccasionThreshold: Double? = nil
+    var displayOccasionThresholds: [String: Double]? = nil
 }
 
 struct ClosetSummaryDTO: Codable {
@@ -53,6 +78,11 @@ struct BatchUploadFailureDTO: Codable {
     let detail: String
 }
 
+struct UploadImagePayload: Codable {
+    let data: Data
+    let filename: String
+}
+
 struct UploadQueueStatusDTO: Codable {
     let clothingItemId: String
     let recognitionStatus: String
@@ -67,6 +97,21 @@ struct ClothingItemUpdateRequestDTO: Encodable {
     let style: String
     let occasion: String
     let recognitionSummary: String?
+    let editSource: String
+    var material: String? = nil
+    var length: String? = nil
+    var sleeveLength: String? = nil
+    var occasionBefore: String? = nil
+    var occasionThresholdAtEdit: Double? = nil
+    var occasionThresholdsAtEdit: [String: Double]? = nil
+}
+
+struct ImageEditMetadataDTO: Encodable {
+    let rotationQuarterTurns: Int
+    let zoomScale: Double
+    let dragX: Double
+    let dragY: Double
+    let editorSide: Double
 }
 
 struct TaxonomyDTO: Codable {
@@ -76,6 +121,18 @@ struct TaxonomyDTO: Codable {
     let occasions: [String]
     let seasons: [String]
     let subtypes: [String: [String]]
+    let lengths: [String]
+    let sleeveLengths: [String]
+}
+
+struct TaxonomyCustomizationsDTO: Codable, Equatable {
+    var subtypes: [String: [String]]?
+    var colors: [String]?
+    var styles: [String]?
+    var occasions: [String]?
+    var seasons: [String]?
+    var lengths: [String]?
+    var sleeveLengths: [String]?
 }
 
 struct UserPreferencesDTO: Codable {
@@ -91,8 +148,10 @@ struct UserPreferencesDTO: Codable {
     let genderIdentity: String?
     let dailyOccasions: [String]
     let stylePreferences: [String]
+    let occasionStylePreferences: [String: [String]]?
     let selectedCategories: [String]
     let customCategories: [String]
+    let taxonomyCustomizations: TaxonomyCustomizationsDTO?
     let modelTrainingConsent: Bool
     let defaultLocationLabel: String?
     let defaultLatitude: Double?
@@ -111,13 +170,41 @@ struct UserPreferencesUpdateRequestDTO: Encodable {
     let genderIdentity: String?
     let dailyOccasions: [String]?
     let stylePreferences: [String]?
+    let occasionStylePreferences: [String: [String]]?
     let selectedCategories: [String]?
     let customCategories: [String]?
+    let taxonomyCustomizations: TaxonomyCustomizationsDTO?
     let modelTrainingConsent: Bool?
     let defaultLocationLabel: String?
     let defaultLatitude: Double?
     let defaultLongitude: Double?
     let temperatureUnit: String?
+}
+
+struct TasteProfileDTO: Codable {
+    let profileVersion: Int
+    let algorithmVersion: String
+    let sourceVersion: Int
+    let projectedVersion: Int
+    let preferredFeatures: [String]
+    let avoidedFeatures: [String]
+    let evidenceCount: Int
+    let pendingFreeTextCount: Int
+    let summarizedFreeTextCount: Int
+    let freeTextSummary: FreeTextTasteSummaryDTO?
+    let explorationRate: Double
+    let inferredPreferenceHalfLifeDays: Int
+    let inferredPreferenceFloor: Double
+    let learningResetAt: String?
+    let updatedAt: String?
+}
+
+struct FreeTextTasteSummaryDTO: Codable {
+    let summary: String
+    let preferredCues: [String]
+    let avoidedCues: [String]
+    let occasionPreferences: [String]
+    let confidence: String
 }
 
 struct RecommendationsRequestDTO: Encodable {
@@ -185,6 +272,8 @@ struct RecommendationBreakdownDTO: Codable, Equatable {
 }
 
 struct OutfitRecommendationDTO: Identifiable, Codable, Equatable {
+    var originalScore: Double? = nil
+    var wearPenalty: Double? = nil
     let id: String
     let title: String
     let score: Double
@@ -193,6 +282,20 @@ struct OutfitRecommendationDTO: Identifiable, Codable, Equatable {
     let missingSlots: [String]
     let breakdown: RecommendationBreakdownDTO
     let items: [ClothingItemDTO]
+}
+
+struct OutfitWearEventDTO: Codable, Equatable {
+    let id: UUID
+    let itemIds: [UUID]
+    let wornAt: String
+    let wearDate: String?
+}
+
+struct OutfitWearStatusDTO: Codable, Equatable {
+    let selectedToday: OutfitWearEventDTO?
+    let selectedTodayItems: [ClothingItemDTO]
+    let latestWornAt: String?
+    let liked: Bool
 }
 
 struct ChatRequestDTO: Encodable {

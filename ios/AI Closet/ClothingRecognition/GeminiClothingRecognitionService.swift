@@ -1,5 +1,6 @@
 import Foundation
 
+@MainActor
 struct GeminiClothingRecognitionService {
     private let session: URLSession
     private let endpoint = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")!
@@ -128,7 +129,9 @@ struct GeminiClothingRecognitionService {
             return "Navy"
         case "red", "burgundy", "wine":
             return "Red"
-        case "green", "olive", "sage":
+        case "olive", "olive green":
+            return "Olive"
+        case "green", "sage":
             return "Green"
         case "brown", "tan", "camel", "khaki":
             return "Brown"
@@ -148,26 +151,7 @@ struct GeminiClothingRecognitionService {
     }
 
     private func normalizedSeasons(_ seasons: [String]) -> Set<String> {
-        let mapped = Set(
-            seasons.compactMap { season -> String? in
-                switch season.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
-                case "spring":
-                    return "Spring"
-                case "summer":
-                    return "Summer"
-                case "fall", "autumn":
-                    return "Fall"
-                case "winter":
-                    return "Winter"
-                case "all-season", "all season", "year-round", "year round":
-                    return "All-Season"
-                default:
-                    return nil
-                }
-            }
-        )
-
-        return mapped.isEmpty ? ["All-Season"] : mapped
+        SeasonSelectionSupport.decode(seasons.joined(separator: ", "))
     }
 
     private func normalizedStyle(_ style: String) -> String {

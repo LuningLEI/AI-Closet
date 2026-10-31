@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from app.core.versions import PROFILE_VERSION, STYLE_PREFERENCE_VERSION, TAXONOMY_VERSION
-from app.models.domain import ClothingItemRecord, ItemFeatureSnapshot, RecognitionJobRecord, RecognitionRecord
+from app.models.domain import ClothingItemRecord, ItemEditEvent, ItemFeatureSnapshot, RecognitionJobRecord, RecognitionRecord
 from app.repositories.closet_repository import ClosetRepository
 
 
@@ -83,6 +83,17 @@ def test_delete_item_is_scoped_and_removes_related_records(repository: ClosetRep
             image_path=f"{user_a}/shirt.jpg",
         )
     )
+    repository.add_item_edit_event(
+        ItemEditEvent(
+            id="edit-a",
+            user_id=user_a,
+            clothing_item_id="item-a",
+            event_type="item_attributes_updated",
+            source="ios",
+            changed_fields=["color"],
+            changes={"color": {"before": "White", "after": "Blue"}},
+        )
+    )
 
     assert repository.delete_item("item-b", user_a) is None
 
@@ -92,6 +103,7 @@ def test_delete_item_is_scoped_and_removes_related_records(repository: ClosetRep
     assert repository.get_item("item-a", user_a) is None
     assert [record.id for record in repository.list_items(user_b)] == ["item-b"]
     assert repository.queue_health(user_a)["total_jobs"] == 0
+    assert not repository.item_edit_events_path.exists() or repository.item_edit_events_path.read_text(encoding="utf-8") == "[]"
 
 
 def test_preferences_save_and_load_are_scoped_by_user(repository: ClosetRepository) -> None:

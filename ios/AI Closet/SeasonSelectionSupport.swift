@@ -1,47 +1,42 @@
 import Foundation
 
+@MainActor
 enum SeasonSelectionSupport {
-    static let options = ["All-Season", "Spring", "Summer", "Fall", "Winter"]
+    static var options: [String] { ClothingTaxonomySupport.seasons }
 
-    static func decode(_ storedValue: String) -> Set<String> {
-        let parsed = storedValue
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+    static func decode(_ storedValue: String) -> Set<String> { decode(storedValue, options: options) }
 
-        let valid = Set(parsed.filter { options.contains($0) })
-        return valid.isEmpty ? ["All-Season"] : valid
+    static func decode(_ storedValue: String,options available:[String]) -> Set<String> {
+        let tokens = storedValue.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        if tokens.contains(where: { ["all-season", "all season", "year-round", "year round"].contains($0) }) { return Set(available) }
+        let normalized = tokens.map { $0 == "autumn" ? "fall" : $0 }
+        let valid = Set(available.filter { normalized.contains($0.lowercased()) })
+        return valid.isEmpty ? Set(available) : valid
     }
 
-    static func encode(_ selection: Set<String>) -> String {
-        let normalized = normalizedSelection(from: selection)
-        return options.filter { normalized.contains($0) }.joined(separator: ", ")
+    static func encode(_ selection: Set<String>) -> String { encode(selection, options: options) }
+
+    static func encode(_ selection: Set<String>,options available:[String]) -> String {
+        let normalized = normalizedSelection(from: selection,options:available)
+        return available.filter { normalized.contains($0) }.joined(separator: ", ")
     }
 
-    static func displayText(for selection: Set<String>) -> String {
-        let normalized = normalizedSelection(from: selection)
-        return options.filter { normalized.contains($0) }.joined(separator: ", ")
-    }
+    static func displayText(for selection: Set<String>) -> String { encode(selection) }
 
-    static func toggled(_ season: String, in selection: Set<String>) -> Set<String> {
-        var updated = normalizedSelection(from: selection)
+    static func displayText(for selection: Set<String>,options available:[String]) -> String { encode(selection,options:available) }
 
-        if season == "All-Season" {
-            return ["All-Season"]
-        }
+    static func toggled(_ season: String, in selection: Set<String>) -> Set<String> { toggled(season, in: selection, options: options) }
 
-        updated.remove("All-Season")
+    static func toggled(_ season: String, in selection: Set<String>,options available:[String]) -> Set<String> {
+        var updated = normalizedSelection(from: selection,options:available)
+        guard available.contains(season) else { return updated }
         if updated.contains(season) {
-            updated.remove(season)
-        } else {
-            updated.insert(season)
-        }
-
-        return updated.isEmpty ? ["All-Season"] : updated
+            if updated.count > 1 { updated.remove(season) }
+        } else { updated.insert(season) }
+        return updated
     }
 
-    private static func normalizedSelection(from selection: Set<String>) -> Set<String> {
-        let valid = selection.filter { options.contains($0) }
-        return valid.isEmpty ? ["All-Season"] : valid
+    private static func normalizedSelection(from selection: Set<String>,options available:[String]) -> Set<String> {
+        decode(selection.joined(separator: ","),options:available)
     }
 }

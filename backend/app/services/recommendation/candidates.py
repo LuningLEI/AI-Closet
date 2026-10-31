@@ -12,8 +12,8 @@ from app.core.constants import (
 )
 from app.models.domain import ClothingItemRecord, RecommendationContext
 from app.services.recommendation.models import Candidate
-from app.services.recommendation.rules import recommendation_slot
-from app.services.taxonomy import merge_preferences, user_categories
+from app.services.recommendation.rules import item_occasion_tokens, recommendation_slot, tights_layering_valid
+from app.services.taxonomy import merge_preferences, preferred_styles_for_occasion, user_categories
 
 
 class CandidateGenerator:
@@ -56,7 +56,7 @@ class CandidateGenerator:
     ) -> dict[str, list[ClothingItemRecord]]:
         grouped: dict[str, list[ClothingItemRecord]] = {}
         for item in items:
-            grouped.setdefault(recommendation_slot(item.category), []).append(item)
+            grouped.setdefault(recommendation_slot(item.category, item.subtype), []).append(item)
 
         for slot, slot_items in list(grouped.items()):
             grouped[slot] = self._shortlist_items(slot_items, slot, context, user_preferences)
@@ -169,17 +169,17 @@ class CandidateGenerator:
         return score
 
     def _occasion_score(self, item: ClothingItemRecord, occasion: str) -> float:
-        item_occasion = item.occasion.lower()
+        item_occasions = item_occasion_tokens(item)
         requested = occasion.lower()
         if requested == "everyday":
-            return 30 if item_occasion in {"everyday", "work", "travel", "school"} else 18
-        if item_occasion == requested:
+            return 30 if item_occasions.intersection({"everyday", "work", "travel", "school"}) else 18
+        if requested in item_occasions:
             return 34
-        if item_occasion == "everyday":
+        if "everyday" in item_occasions:
             return 22
-        if requested in {"party", "date", "wedding", "evening"} and item_occasion in {"party", "date", "wedding", "evening"}:
+        if requested in {"party", "date", "wedding", "evening"} and item_occasions.intersection({"party", "date", "wedding", "evening"}):
             return 24
-        if requested in {"work", "business"} and item_occasion in {"work", "business", "everyday"}:
+        if requested in {"work", "business"} and item_occasions.intersection({"work", "business", "everyday"}):
             return 24
         return 10
 
@@ -218,22 +218,18 @@ class CandidateGenerator:
         user_preferences: dict | None = None,
     ) -> float:
         preferred_style = context.preferred_style
-        if not preferred_style and isinstance(user_preferences, dict):
-            profile = user_preferences.get("profile", {})
-            styles = profile.get("style_preferences") if isinstance(profile, dict) else None
-            if isinstance(styles, list) and styles:
-                preferred_style = styles[0]
+        preferred_styles = [preferred_style] if preferred_style else preferred_styles_for_occasion(user_preferences, context.occasion)
 
-        if not preferred_style:
+        if not preferred_styles:
             return 12
-        if item.style.lower() == preferred_style.lower():
+        if item.style.lower() in {style.lower() for style in preferred_styles}:
             return 18
         return 10
 
     def _color_score(self, item: ClothingItemRecord, preferred_color: str | None) -> float:
         if not preferred_color:
             return 6
-        if item.color.lower() == preferred_color.lower():
+        if preferred_color.lower() in {color.strip().lower() for color in item.color.split(",")}:
             return 12
         return 4
 
@@ -247,6 +243,8 @@ class CandidateGenerator:
         return quality
 
     def _append_unique(self, results: list[Candidate], seen: set[str], candidate: Candidate) -> None:
+        if not tights_layering_valid(candidate.items):
+            return
         if candidate.identifier not in seen:
             seen.add(candidate.identifier)
             results.append(candidate)

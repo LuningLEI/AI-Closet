@@ -34,6 +34,7 @@ struct FeatureComponents {
     let seasonVector: [Double]
 }
 
+@MainActor
 enum RecognitionBackendSupport {
     static func tagsJSONString(from analysis: ClothingAnalysis) -> String? {
         let payload = RecognitionTagPayload(
@@ -70,11 +71,11 @@ enum RecognitionBackendSupport {
 
     static func featureComponents(from analysis: ClothingAnalysis) -> FeatureComponents {
         FeatureComponents(
-            categoryVector: oneHot(analysis.category, options: ["Tops", "Bottoms", "Shoes", "Outerwear", "Accessories", "Uncategorized"]),
+            categoryVector: oneHot(analysis.category, options: ClothingTaxonomySupport.categories),
             colorVector: colorVector(for: analysis.color),
-            styleVector: oneHot(analysis.style, options: ["Casual", "Formal", "Business", "Sporty", "Streetwear", "Elegant", "Minimalist"]),
-            occasionVector: oneHot(analysis.occasion, options: ["Everyday", "Work", "Party", "Date", "Travel", "Workout", "Wedding"]),
-            seasonVector: multiHot(Array(analysis.seasons), options: ["All-Season", "Spring", "Summer", "Fall", "Winter"])
+            styleVector: oneHot(analysis.style, options: ClothingTaxonomySupport.styles),
+            occasionVector: oneHot(analysis.occasion, options: ClothingTaxonomySupport.occasions),
+            seasonVector: multiHot(Array(SeasonSelectionSupport.decode(analysis.seasons.joined(separator: ", "))), options: SeasonSelectionSupport.options)
         )
     }
 
@@ -103,6 +104,7 @@ enum RecognitionBackendSupport {
         case "Navy": return [0.09, 0.17, 0.39]
         case "Red": return [0.85, 0.20, 0.22]
         case "Green": return [0.27, 0.62, 0.33]
+        case "Olive": return [0.50, 0.50, 0.20]
         case "Brown": return [0.45, 0.28, 0.14]
         case "Beige": return [0.86, 0.78, 0.64]
         case "Pink": return [0.93, 0.56, 0.71]

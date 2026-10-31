@@ -151,7 +151,7 @@ private struct ChatRecommendationList: View {
                         HStack(spacing: 10) {
                             ForEach(recommendation.items) { item in
                                 VStack(alignment: .leading, spacing: 6) {
-                                    ClosetAsyncImage(url: item.imageUrl)
+                                    ClosetAsyncImage(url: item.imageUrl, itemID: item.id)
                                         .frame(width: 108, height: 132)
                                         .clipShape(RoundedRectangle(cornerRadius: 14))
                                     Text(item.displayTitle)
@@ -162,6 +162,7 @@ private struct ChatRecommendationList: View {
                             }
                         }
                     }
+                    OutfitActions(items: recommendation.items)
                 }
                 .padding(12)
                 .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 16))

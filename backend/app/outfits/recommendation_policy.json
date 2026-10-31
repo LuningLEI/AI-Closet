@@ -1,0 +1,6 @@
+{
+  "wear_exclusion_days": 2,
+  "wear_penalty_points": 40,
+  "wear_penalty_half_life_days": 3,
+  "wear_penalty_cutoff_days": 14
+}

@@ -142,6 +142,13 @@ def test_candidate_generator_shortlists_context_relevant_items_before_pairing() 
     assert [item.id for item in grouped["Shoes"]] == ["heels", "boots"]
 
 
+def test_candidate_generator_treats_multi_select_occasions_as_individual_matches() -> None:
+    generator = CandidateGenerator()
+    item = closet_item("travel-blouse", "Tops", "Blouse", occasion="Work, Travel")
+
+    assert generator._occasion_score(item, "Travel") == 34
+
+
 def test_recommendation_engine_penalizes_heavy_outerwear_over_light_dress() -> None:
     engine = RecommendationEngine(embedding_service=StaticEmbeddingService())
     recommendations = engine.recommend(

@@ -18,17 +18,17 @@ Run the relevant checks:
 
 ```bash
 make backend-check
-make web-build
+make backend-lint
 ```
 
 For iOS source changes, build the Xcode project from `ios/`.
 
 ## Code Ownership
 
-- `web/`: React components, UI state, Supabase client auth, browser workflows.
+- `ios/`: SwiftUI presentation, API client state, and device workflows.
 - `backend/`: API contracts, repository layer, recognition worker, recommendation logic.
 - `ios/`: native iOS app, Swift services, local ML experiments.
-- `docs/`: architecture, setup, operational notes.
+- `docs/`: indexed architecture, product, evaluation, operations, planning, and change records.
 
 ## Secrets
 

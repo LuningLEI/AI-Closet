@@ -1,108 +1,65 @@
 # AI Closet
 
-AI Closet is a cross-platform wardrobe intelligence project with a Next.js web app, a Python FastAPI backend, Supabase Auth/Postgres/Storage, pgvector-backed vector storage, and an iOS app. The product goal is to turn a user's closet into structured, private style memory that can power upload recognition, outfit recommendation, and daily weather-aware styling.
+AI Closet is an iOS wardrobe intelligence system backed by FastAPI, PostgreSQL/Supabase, pgvector, durable workers, and a per-user Taste Profile. Image upload is independent from recognition; outfit generation, visual review, feedback reduction, and recommendation ranking run through versioned background workflows.
 
-## Repository Layout
+## Repository layout
 
-| Path | Purpose |
-| --- | --- |
-| `web/` | Next.js + TypeScript frontend for auth, closet management, profile preferences, recommendations, and today's outfit. |
-| `backend/` | FastAPI API, recognition and outfit workers, model providers, persistence adapters, and experiment accounting. |
-| `ios/` | Native iOS app and Core ML / outfit recommendation experiments. |
-| `docs/` | Database and backend design guides, API contracts, and development runbooks. |
+| Path | Responsibility |
+|---|---|
+| `ios/` | SwiftUI client and presentation state |
+| `backend/app/` | API, domain services, repositories, recommendation policy, and provider-neutral AI interfaces |
+| `backend/workers/` | Recognition, outfit, Taste Profile, and feedback-summary entry points |
+| `backend/tools/admin/` | Repair, inspection, and backfill commands |
+| `backend/tools/evaluation/` | Offline evaluation, simulation, annotation, and export tools |
+| `backend/sql/` | Schema, migrations, RLS, RPCs, and SQL regression tests |
+| `evaluation/` | Human annotation and reproducible evaluation artifacts |
 
-## Core Stack
+The backend owns the taxonomy. iOS downloads `/api/v1/taxonomy`; no client-side default catalog is maintained.
 
-- Frontend: Next.js, TypeScript
-- Backend: Python, FastAPI
-- AI workflow: vision recognition, embeddings, anchor-based outfit generation, and visual review
-- Background processing: durable database queues with separate recognition and outfit workers
-- Database: Supabase Postgres with pgvector-backed item embeddings
-- Storage: Supabase Storage with private user-scoped object paths and signed URLs
-- Auth and security: Supabase Auth, Row Level Security, user-owned records
-- Deployment targets: Vercel for web, Render/Railway for backend workers
+## Production flow
 
-## Local Start
+1. iOS uploads an image and receives a durable recognition job.
+2. The recognition worker reads the user's current taxonomy, calls the AI Gateway, normalizes output, computes vectors, and commits with lease/version checks.
+3. The outfit worker builds clothing-first candidates, selects shoes/accessories in a batched stage, applies deterministic rules, and performs visual review.
+4. Outfit feedback is appended as evidence. The deterministic Taste Profile reducer creates a versioned per-user profile.
+5. Today and Recommendations both call `PersonalizedRecommendationService`; only their initial context differs. They rank the same projection using preferences, Taste Profile, wear recency, and controlled exploration.
 
-The bundled Core ML model is stored with Git LFS. Before building iOS from a fresh clone:
-
-```bash
-git lfs install
-git lfs pull
-```
-
-Install dependencies and configure the environment following [Local Development](docs/LOCAL_DEVELOPMENT.md). Apply the matching [database migrations](backend/sql/migrations/README.md) before starting the API and workers.
-
-Run these from the repository root in separate terminals:
+## Local commands
 
 ```bash
-make backend-dev PYTHON=python
-make worker PYTHON=python
-# Outfit generation uses a separate worker:
-cd backend && python -m app.outfit_worker
-# Web client (another terminal, from the repository root):
-make web-dev
+cp backend/.env.example backend/.env
+make backend-dev
+make worker
+make outfit-worker
+make taste-profile-worker
+make free-text-taste-worker
 ```
 
-Open `http://localhost:3000`.
-
-## Manual Commands
-
-Backend:
+Quality checks:
 
 ```bash
-cd backend
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m pip install -r backend/requirements-dev.lock
+make check PYTHON=python
+make api-contract PYTHON=python
+xcodebuild -project "ios/AI Closet.xcodeproj" -scheme "AI Closet" \
+  -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
 ```
 
-Recognition worker:
+Run `make clean` to remove local Python caches and Xcode build products. It
+preserves wardrobe images, evaluation artifacts, and model packages.
 
-```bash
-cd backend
-python -m app.worker
-```
+`backend/pyproject.toml` declares dependency intent. Lock files contain the tested production and development resolutions. Runtime model calls use `AI_PROVIDER`, `AI_BASE_URL`, and `AI_API_KEY`, so an OpenAI-compatible provider can replace OpenAI without changing domain services.
 
-Outfit worker:
+## Reliability and privacy
 
-```bash
-cd backend
-python -m app.outfit_worker
-```
+- Supabase RLS and user-scoped repositories isolate user data.
+- Jobs use leases, retries, version checks, idempotent identifiers, and stale-job rejection.
+- Outfit runs store model/prompt hashes, usage, cost, and a unified runtime configuration snapshot.
+- Structured logs carry request IDs; readiness, queue health, and internal counters support operations.
+- Feedback is append-only evidence. Model output is never treated as a user label.
+- Cross-user learning is disabled unless a user explicitly consents.
 
-Web:
-
-```bash
-cd web
-npm run dev
-```
-
-## Documentation
-
-Start here for a code-backed explanation of the design and interview discussion:
-
-- [Database Design Guide — schema, technology choices, tradeoffs, and interview questions](docs/DATABASE_GUIDE.md)
-- [Backend Architecture Guide — modules, workflows, technology choices, and limitations](docs/BACKEND_GUIDE.md)
-- [Database Design Guide (Chinese)](docs/DATABASE_GUIDE.zh-CN.md)
-- [Backend Architecture Guide (Chinese)](docs/BACKEND_GUIDE.zh-CN.md)
-- [Data Architecture and Migration Guide (Chinese)](docs/DATA_ARCHITECTURE.zh-CN.md)
-
-- [Architecture](docs/ARCHITECTURE.md)
-- [API Contract](docs/API.md)
-- [Local Development](docs/LOCAL_DEVELOPMENT.md)
-- [Deployment Runbook](docs/DEPLOYMENT.md)
-- [Contributing](CONTRIBUTING.md)
-
-## Current Scope And Limitations
-
-- Recognition runs asynchronously through a durable job table so uploads return before Vision and embedding work completes.
-- The outfit library uses rule/vector candidate retrieval, model generation and visual review. The existing recommendation endpoints still use a separate deterministic candidate/scoring pipeline. Semantic embeddings are stored in pgvector; current per-user semantic ranking runs in the backend rather than database KNN retrieval.
-- Personalization currently uses explicit preferences and filters. Human annotation and algorithm comparisons support evaluation; learning personalized behavior from interactions remains future work.
-- Core database writes use transactions and version checks. External model calls, image storage, and frontend refreshes are outside that transaction boundary; retries do not guarantee exactly-once model execution.
-- Model configuration is recorded per run, and usage is counted per model call. Missing pricing or usage remains unknown rather than being reported as free.
-- Uploaded clothing photos are private in Supabase Storage. Recognition and image-enabled outfit generation/review send photos to the configured model provider. See the deployment guide before using real credentials or deploying the project.
-
-## Security Notes
-
-- Do not commit `.env`, `.env.local`, Supabase service-role keys, OpenAI keys, or signed storage URLs.
-- Storage objects should live under user-scoped paths like `<user_id>/<object_id>.jpg`.
-- Database access should remain scoped by `user_id` and protected by Supabase RLS policies.
+Use the [documentation index](docs/README.md) to navigate architecture, product,
+evaluation, and operations material. Direct entry points include
+[Architecture](docs/architecture/system.md), [Database guide](docs/architecture/database.md),
+and [Deployment](docs/operations/deployment.md).

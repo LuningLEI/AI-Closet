@@ -9,39 +9,58 @@ struct ClosetHomeView: View {
 
     private let contentHorizontalPadding: CGFloat = 16
     @EnvironmentObject private var authStore: AuthStore
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var isClosetVisible = false
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var viewModel = ClosetViewModel()
+    @State private var libraryMode = false
+    @State private var creatingOutfit = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var editingItem: ClothingItemDTO?
+    @State private var outfitItemID: UUID?
     @State private var itemPendingDelete: ClothingItemDTO?
     @State private var showingCardDeleteConfirmation = false
     @State private var activeFilterPanel: ActiveFilterPanel?
     @State private var showsFilters = false
+    @State private var showsUploadFailureDetails = false
 
     var body: some View {
         ZStack(alignment: .top) {
             NavigationStack {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        header
-                        if showsFilters {
-                            filters
+                        Picker("Closet section", selection: $libraryMode) {
+                            Text("Items").tag(false)
+                            Text("Outfits").tag(true)
                         }
-                        content
+                        .pickerStyle(.segmented)
+                        if libraryMode {
+                            OutfitLibraryView(closet: viewModel)
+                        } else {
+                            header
+                            if showsFilters { filters }
+                            content
+                        }
                     }
                     .padding(contentHorizontalPadding)
                 }
                 .navigationTitle("Closet")
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
+                        if !libraryMode {
                         Picker("View", selection: $viewModel.viewMode) {
                             Image(systemName: "square.grid.2x2").tag(ClosetViewMode.grid)
                             Image(systemName: "list.bullet").tag(ClosetViewMode.list)
                         }
                         .pickerStyle(.segmented)
                         .frame(width: 104)
+                        }
                     }
                     ToolbarItem(placement: .navigationBarTrailing) {
+                        if libraryMode {
+                            Button { creatingOutfit = true } label: { Image(systemName: "plus") }
+                                .accessibilityLabel("Create outfit")
+                        } else {
                         let isUploading = viewModel.isUploading
                         PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 20, matching: .images) {
                             if isUploading {
@@ -50,29 +69,59 @@ struct ClosetHomeView: View {
                                 Image(systemName: "plus")
                             }
                         }
+                        }
                     }
                 }
+                .sheet(isPresented: $creatingOutfit) { OutfitComposerView() }
                 .refreshable {
                     await viewModel.load(token: await authStore.validAccessToken())
                 }
                 .onAppear {
+                    isClosetVisible = true
                     Task {
                         let token = await authStore.validAccessToken()
-                        if viewModel.items.isEmpty && !viewModel.isLoading {
+                        guard isClosetVisible, scenePhase == .active else { return }
+                        viewModel.resumePollingIfNeeded(token: token) {
+                            await authStore.validAccessToken()
+                        }
+                        if !viewModel.isLoading {
                             await viewModel.load(token: token)
-                        } else {
-                            viewModel.resumePollingIfNeeded(token: token)
                         }
                     }
                 }
                 .onDisappear {
+                    isClosetVisible = false
                     viewModel.pausePolling()
                 }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase != .active {
+                        viewModel.pausePolling()
+                    } else if isClosetVisible {
+                        Task {
+                            let token = await authStore.validAccessToken()
+                            guard isClosetVisible, scenePhase == .active else { return }
+                            viewModel.resumePollingIfNeeded(token: token) {
+                                await authStore.validAccessToken()
+                            }
+                            if !viewModel.isLoading { await viewModel.load(token: token) }
+                        }
+                    }
+                }
+                .onChange(of: libraryMode) { _, _ in activeFilterPanel = nil }
                 .onChange(of: selectedPhotos) { _, newValue in
                     Task {
                         await viewModel.upload(newValue, token: await authStore.validAccessToken())
                         selectedPhotos = []
                     }
+                }
+                .navigationDestination(item: $outfitItemID) { itemID in
+                    ScrollView {
+                        OutfitLibraryView(closet: viewModel, initialItemID: itemID)
+                            .padding(contentHorizontalPadding)
+                    }
+                    .navigationTitle("Outfits with this item")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .id(itemID)
                 }
                 .sheet(item: $editingItem) { item in
                     ClothingDetailView(
@@ -88,6 +137,9 @@ struct ClosetHomeView: View {
                         }
                     )
                     .id(item.id)
+                }
+                .sheet(isPresented: $showsUploadFailureDetails) {
+                    UploadFailureDetailsView(failures: viewModel.uploadFailures)
                 }
                 .confirmationDialog(
                     "Delete this clothing item?",
@@ -152,14 +204,32 @@ struct ClosetHomeView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Toggle filters")
             }
+            if viewModel.hasPendingUploads {
+                Button("Retry pending uploads", systemImage: "arrow.clockwise") {
+                    Task { await viewModel.retryPendingUploads(token: await authStore.validAccessToken()) }
+                }
+                .disabled(viewModel.isUploading)
+            }
             if let errorMessage = viewModel.errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.red)
-                    .lineLimit(3)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.red)
+                        .lineLimit(3)
+
+                    Spacer(minLength: 0)
+
+                    if !viewModel.uploadFailures.isEmpty {
+                        Button("Details") {
+                            showsUploadFailureDetails = true
+                        }
+                        .font(.footnote.weight(.bold))
+                        .foregroundStyle(.red)
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
             }
         }
     }
@@ -208,6 +278,8 @@ struct ClosetHomeView: View {
                         } onDelete: {
                             itemPendingDelete = item
                             showingCardDeleteConfirmation = true
+                        } onViewOutfits: {
+                            outfitItemID = item.id
                         }
                     }
                 }
@@ -222,6 +294,8 @@ struct ClosetHomeView: View {
                     } onDelete: {
                         itemPendingDelete = item
                         showingCardDeleteConfirmation = true
+                    } onViewOutfits: {
+                        outfitItemID = item.id
                     }
                 }
             }
@@ -355,195 +429,5 @@ struct ClosetHomeView: View {
         case .color:
             viewModel.selectedColors.removeAll()
         }
-    }
-}
-
-private struct ClosetGridCard: View {
-    let item: ClothingItemDTO
-    let cardWidth: CGFloat
-    let onEdit: () -> Void
-    let onDelete: () -> Void
-
-    var body: some View {
-        Button(action: onEdit) {
-            VStack(alignment: .leading, spacing: 10) {
-                ClosetAsyncImage(url: item.imageUrl)
-                .frame(width: imageWidth, height: 168)
-                .background(Color(.tertiarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(item.displayTitle)
-                        .font(.headline)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    if item.isRecognitionPending {
-                        Label("Analyzing", systemImage: "sparkles")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.blue)
-                            .lineLimit(1)
-                    } else {
-                        Text([item.category, item.color, item.style].joined(separator: " · "))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .truncationMode(.tail)
-                    }
-                }
-                .frame(width: imageWidth, alignment: .leading)
-                .frame(height: 54, alignment: .topLeading)
-            }
-            .padding(12)
-            .frame(width: cardWidth, height: 260, alignment: .topLeading)
-            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 18))
-            .overlay {
-                RoundedRectangle(cornerRadius: 18).stroke(Color(.separator).opacity(0.35))
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 18))
-            .clipped()
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            Button(role: .destructive, action: onDelete) {
-                Label("Delete", systemImage: "trash")
-            }
-        }
-    }
-
-    private var imageWidth: CGFloat {
-        cardWidth - 24
-    }
-}
-
-private struct ClosetListCard: View {
-    let item: ClothingItemDTO
-    let onEdit: () -> Void
-    let onDelete: () -> Void
-
-    var body: some View {
-        Button(action: onEdit) {
-            HStack(spacing: 14) {
-                ClosetAsyncImage(url: item.imageUrl)
-                    .frame(width: 92, height: 92)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(item.displayTitle)
-                        .font(.headline)
-                    if item.isRecognitionPending {
-                        Text("Recognition in progress")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text(item.recognitionSummary ?? "\(item.color) \(item.category.lowercased()) for \(item.occasion.lowercased()).")
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(12)
-            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 18))
-            .overlay {
-                RoundedRectangle(cornerRadius: 18).stroke(Color(.separator).opacity(0.35))
-            }
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            Button(role: .destructive, action: onDelete) {
-                Label("Delete", systemImage: "trash")
-            }
-        }
-    }
-}
-
-struct ClosetAsyncImage: View {
-    let url: String
-    @State private var phase: RemoteImagePhase = .loading
-
-    var body: some View {
-        let resolvedURL = ImageURLResolver.resolve(url)
-
-        ZStack {
-            Color(.tertiarySystemBackground)
-            switch phase {
-            case .success(let image):
-                image
-                    .resizable()
-                    .scaledToFill()
-            case .failure:
-                Image(systemName: "photo")
-                    .font(.largeTitle)
-                    .foregroundStyle(.secondary)
-            case .loading:
-                ProgressView()
-            }
-        }
-        .task(id: url) {
-            await loadImage(from: resolvedURL)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .clipped()
-    }
-
-    private func loadImage(from resolvedURL: URL?) async {
-        guard let resolvedURL else {
-            print("[ClosetAsyncImage] invalid_image_url", "raw=\(url)")
-            phase = .failure
-            return
-        }
-
-        if let cachedImage = RemoteImageCache.shared.image(for: resolvedURL) {
-            phase = .success(Image(uiImage: cachedImage))
-            return
-        }
-
-        phase = .loading
-
-        var request = URLRequest(url: resolvedURL)
-        request.timeoutInterval = 20
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200..<300).contains(httpResponse.statusCode),
-                  let uiImage = UIImage(data: data) else {
-                phase = .failure
-                return
-            }
-            RemoteImageCache.shared.insert(uiImage, for: resolvedURL)
-            phase = .success(Image(uiImage: uiImage))
-        } catch {
-            print(
-                "[ClosetAsyncImage] load_failed",
-                "url=\(resolvedURL.absoluteString)",
-                "message=\(error.localizedDescription)"
-            )
-            phase = .failure
-        }
-    }
-}
-
-private enum RemoteImagePhase {
-    case loading
-    case success(Image)
-    case failure
-}
-
-private final class RemoteImageCache {
-    static let shared = RemoteImageCache()
-
-    private let cache = NSCache<NSURL, UIImage>()
-
-    private init() {}
-
-    func image(for url: URL) -> UIImage? {
-        cache.object(forKey: url as NSURL)
-    }
-
-    func insert(_ image: UIImage, for url: URL) {
-        cache.setObject(image, forKey: url as NSURL)
     }
 }

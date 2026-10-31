@@ -20,7 +20,9 @@ from app.core.constants import (
 from app.models.domain import ClothingItemRecord, OutfitRecommendationRecord, RecommendationBreakdown, RecommendationContext
 from app.services.embedding_service import EmbeddingService
 from app.services.recommendation.models import Candidate
-from app.services.recommendation.rules import allowed_seasons
+from app.services.recommendation.rules import allowed_seasons, item_occasion_tokens, tights_layering_valid
+from app.services.taxonomy import preferred_styles_for_occasion
+from app.services.taste_profile import outfit_taste_score
 
 
 class CandidateScorer:
@@ -33,7 +35,12 @@ class CandidateScorer:
         context: RecommendationContext,
         context_vector: list[float] | None,
         preferences: dict | None = None,
+        *,
+        trusted_user_outfit: bool = False,
+        taste_profile: dict | None = None,
     ) -> OutfitRecommendationRecord | None:
+        if not trusted_user_outfit and not tights_layering_valid(candidate.items):
+            return None
         breakdown = RecommendationBreakdown()
         reasons: list[str] = []
         styling_notes: list[str] = []
@@ -47,10 +54,12 @@ class CandidateScorer:
         breakdown.weather_fit, weather_reason = self._weather_score(candidate, context.temperature_f)
         reasons.append(weather_reason)
 
-        profile = (preferences or {}).get("profile", {}) if isinstance(preferences, dict) else {}
-        profile_styles = profile.get("style_preferences") if isinstance(profile, dict) else []
-        style_preference = context.preferred_style or (profile_styles[0] if isinstance(profile_styles, list) and profile_styles else None)
-        breakdown.style_harmony, style_reason = self._style_score(candidate, style_preference)
+        style_preferences = (
+            [context.preferred_style]
+            if context.preferred_style
+            else preferred_styles_for_occasion(preferences, context.occasion)
+        )
+        breakdown.style_harmony, style_reason = self._style_score(candidate, style_preferences)
         reasons.append(style_reason)
 
         breakdown.color_harmony, color_reason = self._color_score(candidate)
@@ -67,13 +76,18 @@ class CandidateScorer:
         else:
             reasons.append("Builds a complete outfit instead of isolated pieces.")
 
-        if breakdown.total <= MIN_RECOMMENDATION_SCORE:
+        if not trusted_user_outfit and breakdown.total <= MIN_RECOMMENDATION_SCORE:
             return None
 
+        personalization = outfit_taste_score(candidate.items, taste_profile, {"occasion": context.occasion})
+        if personalization:
+            reasons.append("Adjusted using your learned outfit preferences.")
         return OutfitRecommendationRecord(
             id=candidate.identifier,
             title=self._title(candidate),
-            score=round(breakdown.total, 2),
+            score=round(max(0, breakdown.total + personalization), 2),
+            personalization_score=round(personalization, 2),
+            taste_profile_version=(taste_profile or {}).get("profile_version"),
             reasons=reasons[:3],
             styling_notes=styling_notes or self._styling_notes(candidate, context),
             missing_slots=missing_slots,
@@ -122,16 +136,16 @@ class CandidateScorer:
         requested = context.occasion.lower()
         scores = []
         for item in candidate.items:
-            item_occasion = item.occasion.lower()
+            item_occasions = item_occasion_tokens(item)
             if requested == "everyday":
-                scores.append(18 if item_occasion in {"everyday", "travel", "work"} else 12)
-            elif item_occasion == requested:
+                scores.append(18 if item_occasions.intersection({"everyday", "travel", "work"}) else 12)
+            elif requested in item_occasions:
                 scores.append(25)
-            elif item_occasion == "everyday":
+            elif "everyday" in item_occasions:
                 scores.append(16)
-            elif requested in {"party", "date", "wedding", "evening"} and item_occasion in {"party", "date", "wedding", "evening"}:
+            elif requested in {"party", "date", "wedding", "evening"} and item_occasions.intersection({"party", "date", "wedding", "evening"}):
                 scores.append(19)
-            elif requested in {"work", "business"} and item_occasion in {"work", "everyday"}:
+            elif requested in {"work", "business"} and item_occasions.intersection({"work", "everyday"}):
                 scores.append(18)
             else:
                 scores.append(8)
@@ -180,18 +194,20 @@ class CandidateScorer:
                 item_scores.append(8)
         return sum(item_scores) / len(item_scores)
 
-    def _style_score(self, candidate: Candidate, preferred_style: str | None) -> tuple[float, str]:
+    def _style_score(self, candidate: Candidate, preferred_styles: list[str]) -> tuple[float, str]:
         styles = [item.style.strip().lower() for item in candidate.items]
         dominant = max(set(styles), key=styles.count)
+        preferred = {style.strip().lower() for style in preferred_styles if style.strip()}
         score = styles.count(dominant) * 4
-        if preferred_style and dominant == preferred_style.lower():
+        if dominant in preferred:
             score += 10
-        elif preferred_style and preferred_style.lower() in styles:
+        elif preferred.intersection(styles):
             score += 6
         score = min(score + 6, MAX_STYLE_SCORE)
+        matched = next((style for style in preferred_styles if style.strip().lower() in styles), None)
         reason = (
-            f"Includes your {preferred_style.lower()} style preference."
-            if preferred_style and preferred_style.lower() in styles
+            f"Includes your {matched.lower()} style preference."
+            if matched
             else "Keeps the outfit visually consistent."
             if dominant == "casual"
             else f"Leans into a {dominant} styling direction."
@@ -199,7 +215,7 @@ class CandidateScorer:
         return score, reason
 
     def _color_score(self, candidate: Candidate) -> tuple[float, str]:
-        colors = [item.color.lower() for item in candidate.items]
+        colors = [color.strip().lower() for item in candidate.items for color in item.color.split(",") if color.strip()]
         unique = set(colors)
         neutral_count = sum(1 for color in colors if color in NEUTRAL_COLORS)
         accent_count = len([color for color in unique if color not in NEUTRAL_COLORS and color != "unknown"])
@@ -217,7 +233,7 @@ class CandidateScorer:
         return 14, "Color mix stays reasonably coordinated."
 
     def _preferred_color_bonus(self, candidate: Candidate, preferred_color: str) -> tuple[float, str | None]:
-        if any(item.color.lower() == preferred_color.lower() for item in candidate.items):
+        if any(preferred_color.lower() in {color.strip().lower() for color in item.color.split(",")} for item in candidate.items):
             return 3, f"Includes your {preferred_color.lower()} color preference."
         return 0, None
 

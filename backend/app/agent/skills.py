@@ -6,7 +6,7 @@ from typing import Protocol
 
 from app.agent.intents import AgentIntent
 from app.core.constants import DEFAULT_CATEGORY, DEFAULT_OCCASION, DEFAULT_RECOMMENDATION_LIMIT, DEFAULT_TEMPERATURE_F
-from app.models.domain import ClothingItemRecord, RecommendationContext, SkillCallRecord
+from app.models.domain import RecommendationContext, SkillCallRecord
 from app.repositories.closet_repository import ClosetRepository
 from app.services.recommendation import RecommendationEngine
 from app.services.taxonomy import COLORS, OCCASIONS, STYLES, merge_preferences, user_categories
@@ -65,10 +65,11 @@ class RecommendationSkill:
             limit=requested_limit,
         )
         preferences = self.repository.get_preferences(user_id).get("preferences", {}) if user_id else {}
-        recommendations = self.engine.recommend(self.repository.list_items_for_recommendation(user_id), context, preferences)
+        from app.outfits.recommendations import recommend_library
+        recommendations = recommend_library(self.repository, self.engine, user_id, context, preferences) if user_id else []
         if not recommendations:
             return SkillResult(
-                summary="I could not form a strong outfit yet. Add more tops, bottoms, or shoes, or loosen the occasion and season constraints.",
+                summary="No saved outfits are available for this request. Save an outfit in Closet, or wait until its recently worn items are outside the 48-hour exclusion period.",
                 payload={"context": context.model_dump(), "recommendations": []},
             )
 

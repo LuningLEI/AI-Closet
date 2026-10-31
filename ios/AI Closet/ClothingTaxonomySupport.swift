@@ -1,13 +1,24 @@
 import Foundation
 
+/// Runtime cache only. The backend `/api/v1/taxonomy` response is the sole
+/// default taxonomy; the app does not ship a second catalog.
+@MainActor
 enum ClothingTaxonomySupport {
-    static let categories = ["Tops", "Bottoms", "Shoes", "Outerwear", "Accessories", "Uncategorized"]
-    static let colors = ["Unknown", "Black", "White", "Gray", "Blue", "Navy", "Red", "Green", "Brown", "Beige", "Pink", "Purple", "Yellow", "Orange"]
-    static let styles = ["Casual", "Formal", "Business", "Sporty", "Streetwear", "Elegant", "Minimalist"]
-    static let occasions = ["Everyday", "Work", "Party", "Date", "Travel", "Workout", "Wedding"]
+    private(set) static var taxonomy = TaxonomyDTO(
+        categories: [], colors: [], styles: [], occasions: [], seasons: [],
+        subtypes: [:], lengths: [], sleeveLengths: []
+    )
 
+    static func install(_ value: TaxonomyDTO) {
+        taxonomy = value
+    }
+
+    static var categories: [String] { taxonomy.categories }
+    static var colors: [String] { taxonomy.colors }
+    static var styles: [String] { taxonomy.styles }
+    static var occasions: [String] { taxonomy.occasions }
+    static var seasons: [String] { taxonomy.seasons }
     static var allSubtypeOptions: [String] {
-        let grouped = categories.flatMap { SubtypeSupport.options(for: $0) }
-        return Array(NSOrderedSet(array: grouped)) as? [String] ?? ["Unknown"]
+        Array(Set(taxonomy.subtypes.values.flatMap { $0 })).sorted()
     }
 }

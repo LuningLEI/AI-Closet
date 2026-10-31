@@ -2,11 +2,33 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from app.models.domain import ClothingItemRecord, ItemFeatureSnapshot, RecognitionJobRecord, RecognitionRecord
+from app.models.domain import ClothingItemRecord, ItemEditEvent, ItemFeatureSnapshot, RecognitionJobRecord, RecognitionRecord
 
 
 class ClosetRepositoryProtocol(Protocol):
+    def create_item_with_records(self, item, recognition=None, feature=None, job=None): ...
+
+    def commit_item_change(self, expected, updates, recognition=None, event=None, feature=None, job=None): ...
+
+    def list_embedding_retry_candidates(self) -> list[ClothingItemRecord]:
+        ...
+
+    def update_embedding_if_current(self, expected: ClothingItemRecord, updates: dict[str, Any]) -> ClothingItemRecord | None:
+        ...
+
     def list_items(self, user_id: str | None = None) -> list[ClothingItemRecord]:
+        ...
+
+    def list_items_for_outfits(self, user_id: str) -> list[ClothingItemRecord]:
+        ...
+
+    def list_items_for_outfit_candidates(self, user_id: str) -> list[ClothingItemRecord]:
+        ...
+
+    def list_items_for_recognition_reset(self, user_id: str) -> list[ClothingItemRecord]:
+        ...
+
+    def list_recognition_jobs(self, user_id: str) -> list[RecognitionJobRecord]:
         ...
 
     def list_items_for_recommendation(self, user_id: str | None = None) -> list[ClothingItemRecord]:
@@ -14,6 +36,8 @@ class ClosetRepositoryProtocol(Protocol):
 
     def add_item(self, item: ClothingItemRecord) -> ClothingItemRecord:
         ...
+
+    def update_item_if_current(self, expected: ClothingItemRecord, updates: dict) -> ClothingItemRecord | None: ...
 
     def update_item(self, item_id: str, updates: dict[str, Any], user_id: str | None = None) -> ClothingItemRecord | None:
         ...
@@ -30,6 +54,9 @@ class ClosetRepositoryProtocol(Protocol):
         ...
 
     def add_recognition_record(self, recognition_record: RecognitionRecord) -> RecognitionRecord:
+        ...
+
+    def add_item_edit_event(self, event: ItemEditEvent) -> ItemEditEvent:
         ...
 
     def add_feature_snapshot(self, feature_snapshot: ItemFeatureSnapshot) -> ItemFeatureSnapshot:

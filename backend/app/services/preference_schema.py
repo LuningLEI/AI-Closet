@@ -5,7 +5,7 @@ from typing import Any
 
 from app.core.constants import DEFAULT_OCCASION, DEFAULT_STYLE
 from app.core.versions import PROFILE_VERSION, STYLE_PREFERENCE_VERSION, TAXONOMY_VERSION
-from app.services.taxonomy import CATEGORIES, default_user_preferences, merge_preferences
+from app.services.taxonomy import CATEGORIES, default_user_preferences, merge_preferences, normalize_customizations
 
 DEFAULT_DAILY_OCCASIONS = [DEFAULT_OCCASION, "Work"]
 DEFAULT_STYLE_PREFERENCES = [DEFAULT_STYLE]
@@ -31,6 +31,10 @@ def normalize_preference_updates(user_id: str, existing: dict[str, Any] | None, 
     payload = normalize_preference_record(existing or {"user_id": user_id})
     payload.update({key: value for key, value in updates.items() if value is not None})
     if "preferences" in updates:
+        if isinstance(updates["preferences"], dict) and "occasion_thresholds" not in updates["preferences"]:
+            previous_thresholds = ((existing or {}).get("preferences") or {}).get("occasion_thresholds")
+            if previous_thresholds is not None:
+                payload["preferences"] = {**updates["preferences"], "occasion_thresholds": previous_thresholds}
         for key in (
             "onboarding_completed",
             "nickname",
@@ -39,8 +43,10 @@ def normalize_preference_updates(user_id: str, existing: dict[str, Any] | None, 
             "gender_identity",
             "daily_occasions",
             "style_preferences",
+            "occasion_style_preferences",
             "selected_categories",
             "custom_categories",
+            "taxonomy_customizations",
         ):
             if key not in updates:
                 payload.pop(key, None)
@@ -68,6 +74,23 @@ def normalize_preference_record(record: dict[str, Any]) -> dict[str, Any]:
     if not style_preferences:
         style_preferences = _string_list(profile.get("style_preferences"), DEFAULT_STYLE_PREFERENCES)
 
+    raw_occasion_styles = record.get("occasion_style_preferences")
+    raw_memory = record.get("preferences") if isinstance(record.get("preferences"), dict) else {}
+    raw_profile = raw_memory.get("profile") if isinstance(raw_memory.get("profile"), dict) else {}
+    if not isinstance(raw_occasion_styles, dict):
+        # Read the unmerged profile so the defaults do not mask legacy flat
+        # preferences that still need to be expanded across occasions.
+        raw_occasion_styles = raw_profile.get("occasion_style_preferences")
+    occasion_style_preferences = _occasion_style_map(
+        raw_occasion_styles,
+        daily_occasions,
+        style_preferences,
+    )
+    # Retain the legacy field as a stable union for older clients and jobs.
+    style_preferences = list(dict.fromkeys(
+        style for occasion in daily_occasions for style in occasion_style_preferences[occasion]
+    ))
+
     selected_categories = _string_list(record.get("selected_categories"), None)
     if not selected_categories:
         selected_categories = _string_list(taxonomy.get("selected_categories"), CATEGORIES)
@@ -75,6 +98,13 @@ def normalize_preference_record(record: dict[str, Any]) -> dict[str, Any]:
     custom_categories = _string_list(record.get("custom_categories"), None)
     if custom_categories is None:
         custom_categories = _string_list(taxonomy.get("custom_categories"), [])
+
+    taxonomy_customizations = record.get("taxonomy_customizations")
+    if not isinstance(taxonomy_customizations, dict):
+        taxonomy_customizations = taxonomy.get("customizations")
+    if not isinstance(taxonomy_customizations, dict):
+        taxonomy_customizations = {}
+    taxonomy_customizations = normalize_customizations(taxonomy_customizations,selected_categories+custom_categories)
 
     onboarding_completed = _bool_value(
         _record_value(record, "onboarding_completed"),
@@ -94,12 +124,14 @@ def normalize_preference_record(record: dict[str, Any]) -> dict[str, Any]:
             "gender_identity": gender_identity,
             "daily_occasions": daily_occasions,
             "style_preferences": style_preferences,
+            "occasion_style_preferences": occasion_style_preferences,
         }
     )
     taxonomy.update(
         {
             "selected_categories": selected_categories,
             "custom_categories": custom_categories,
+            "customizations": taxonomy_customizations,
         }
     )
     memory.update(
@@ -124,8 +156,10 @@ def normalize_preference_record(record: dict[str, Any]) -> dict[str, Any]:
             "gender_identity": gender_identity,
             "daily_occasions": daily_occasions,
             "style_preferences": style_preferences,
+            "occasion_style_preferences": occasion_style_preferences,
             "selected_categories": selected_categories,
             "custom_categories": custom_categories,
+            "taxonomy_customizations": taxonomy_customizations,
             "model_training_consent": model_training_consent,
             "versions": memory["schema_versions"],
         }
@@ -144,8 +178,10 @@ def normalize_preference_record(record: dict[str, Any]) -> dict[str, Any]:
         "gender_identity": gender_identity,
         "daily_occasions": daily_occasions,
         "style_preferences": style_preferences,
+        "occasion_style_preferences": occasion_style_preferences,
         "selected_categories": selected_categories,
         "custom_categories": custom_categories,
+        "taxonomy_customizations": taxonomy_customizations,
         "model_training_consent": model_training_consent,
         "profile_features": profile_features,
         "default_location_label": record.get("default_location_label"),
@@ -161,6 +197,18 @@ def _string_or_none(value: Any) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _occasion_style_map(value: Any, occasions: list[str], fallback_styles: list[str]) -> dict[str, list[str]]:
+    source = value if isinstance(value, dict) else {}
+    result: dict[str, list[str]] = {}
+    for occasion in occasions:
+        matched = next(
+            (styles for label, styles in source.items() if isinstance(label, str) and label.strip().casefold() == occasion.casefold()),
+            None,
+        )
+        result[occasion] = _string_list(matched, fallback_styles) or list(fallback_styles)
+    return result
 
 
 def _int_or_none(value: Any) -> int | None:

@@ -6,27 +6,44 @@ import UIKit
 
 @MainActor
 final class ClosetViewModel: ObservableObject {
-    private enum UploadConfig {
+    enum UploadConfig {
         static let batchSize = 5
+        static let automaticRetryCount = 2
+        static let retryDelayNanoseconds: UInt64 = 1_000_000_000
+    }
+
+    struct UploadFailure: Identifiable {
+        let id = UUID()
+        let photoLabel: String
+        let reason: String
+    }
+
+    struct PreparedUpload: Codable {
+        let photoLabel: String
+        let payload: UploadImagePayload
     }
 
     @Published var items: [ClothingItemDTO] = []
     @Published var summary: ClosetSummaryDTO?
-    @Published var taxonomy = TaxonomyDTO(categories: [], colors: [], styles: [], occasions: [], seasons: [], subtypes: [:])
+    @Published var taxonomy = TaxonomyDTO(categories: [], colors: [], styles: [], occasions: [], seasons: [], subtypes: [:],lengths:[],sleeveLengths:[])
     @Published var selectedCategories: Set<String> = []
     @Published var selectedColors: Set<String> = []
     @Published var viewMode: ClosetViewMode = .grid
     @Published var isUploading = false
+    @Published var hasPendingUploads = false
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var uploadFailures: [UploadFailure] = []
 
-    private let apiClient = APIClient.shared
+    let apiClient = APIClient.shared
     private var pollingTask: Task<Void, Never>?
+    private var pollingEnabled = false
+    private var pollingTokenProvider: (() async -> String?)?
 
     var visibleItems: [ClothingItemDTO] {
         items.filter { item in
             let categoryMatches = selectedCategories.isEmpty || selectedCategories.contains(item.category)
-            let colorMatches = selectedColors.isEmpty || selectedColors.contains(item.color)
+            let colorMatches = selectedColors.isEmpty || !selectedColors.isDisjoint(with: ColorSelectionSupport.decode(item.color))
             return categoryMatches && colorMatches
         }
     }
@@ -57,12 +74,14 @@ final class ClosetViewModel: ObservableObject {
 
     func load(token: String?) async {
         isLoading = true
+        hasPendingUploads = ((try? readPendingUploads(token: token).count) ?? 0) > 0
         errorMessage = nil
         defer { isLoading = false }
         do {
             let itemsResponse: [ClothingItemDTO] = try await apiClient.get("/api/v1/items", token: token)
             let summaryResponse: ClosetSummaryDTO = try await apiClient.get("/api/v1/summary", token: token)
             let taxonomyResponse: TaxonomyDTO = try await apiClient.get("/api/v1/taxonomy", token: token)
+            ClothingTaxonomySupport.install(taxonomyResponse)
             items = itemsResponse
             summary = Self.reconciledSummary(summaryResponse, using: itemsResponse)
             taxonomy = taxonomyResponse
@@ -73,52 +92,61 @@ final class ClosetViewModel: ObservableObject {
     }
 
     func upload(_ pickerItems: [PhotosPickerItem], token: String?) async {
-        guard !pickerItems.isEmpty else { return }
+        guard !pickerItems.isEmpty, !isUploading else { return }
         isUploading = true
         errorMessage = nil
+        uploadFailures = []
         defer { isUploading = false }
 
-        var preparedImages: [Data] = []
-        var skippedCount = 0
+        var preparedImages: [PreparedUpload] = []
+        var failures: [UploadFailure] = []
 
-        for pickerItem in pickerItems {
+        for (index, pickerItem) in pickerItems.enumerated() {
+            let photoLabel = "Photo \(index + 1)"
             do {
                 if let data = try await pickerItem.loadTransferable(type: Data.self) {
-                    preparedImages.append(Self.normalizedJPEGData(from: data))
+                    preparedImages.append(
+                        PreparedUpload(
+                            photoLabel: photoLabel,
+                            payload: UploadImagePayload(
+                                data: Self.normalizedJPEGData(from: data),
+                                filename: "\(UUID().uuidString).jpg"
+                            )
+                        )
+                    )
                 } else {
-                    skippedCount += 1
+                    failures.append(UploadFailure(photoLabel: photoLabel, reason: "This photo could not be loaded from your library."))
                 }
             } catch {
-                skippedCount += 1
+                failures.append(UploadFailure(photoLabel: photoLabel, reason: Self.userFacingError(error)))
             }
         }
 
         guard !preparedImages.isEmpty else {
+            uploadFailures = failures
             errorMessage = "None of the selected photos could be loaded. Please try again."
             return
         }
 
+        do {
+            let existing = try readPendingUploads(token: token)
+            try writePendingUploads(existing + preparedImages, token: token)
+        } catch {
+            errorMessage = "Could not save the upload queue. No new photos were sent. \(error.localizedDescription)"
+            return
+        }
         var uploadedItems: [ClothingItemDTO] = []
-        var backendFailures: [BatchUploadFailureDTO] = []
-        var failedChunkCount = 0
 
         for batch in preparedImages.chunked(into: UploadConfig.batchSize) {
-            do {
-                let response = try await apiClient.uploadImages(batch, token: token)
-                uploadedItems.append(contentsOf: response.items)
-                backendFailures.append(contentsOf: response.errors)
-            } catch {
-                failedChunkCount += batch.count
-                print(
-                    "[ClosetViewModel] upload batch failed",
-                    "batch_size=\(batch.count)",
-                    "message=\(error.localizedDescription)"
-                )
-            }
+            let result = await uploadBatchWithRetries(batch, token: token)
+            uploadedItems.append(contentsOf: result.items)
+            failures.append(contentsOf: result.failures)
         }
 
+        uploadFailures = failures
+
         if uploadedItems.isEmpty {
-            let failedCount = backendFailures.count + skippedCount + failedChunkCount
+            let failedCount = failures.count
             if failedCount > 0 {
                 errorMessage = "Upload failed for \(failedCount) photo\(failedCount == 1 ? "" : "s"). Please try again."
             } else {
@@ -131,7 +159,7 @@ final class ClosetViewModel: ObservableObject {
         summary = Self.reconciledSummary(summary, using: items)
         startPollingIfNeeded(token: token)
 
-        let failedCount = backendFailures.count + skippedCount + failedChunkCount
+        let failedCount = failures.count
         if failedCount > 0 {
             errorMessage = "Uploaded \(uploadedItems.count) of \(pickerItems.count) photos. \(failedCount) failed."
         } else {
@@ -139,7 +167,7 @@ final class ClosetViewModel: ObservableObject {
         }
     }
 
-    func update(_ item: ClothingItemDTO, token: String?) async {
+    func update(_ item: ClothingItemDTO, token: String?, editSource: String = "ios", occasionBefore: String? = nil, occasionThresholdAtEdit: Double? = nil, occasionThresholdsAtEdit: [String: Double]? = nil) async -> Bool {
         errorMessage = nil
         do {
             let request = ClothingItemUpdateRequestDTO(
@@ -149,16 +177,30 @@ final class ClosetViewModel: ObservableObject {
                 season: item.season,
                 style: item.style,
                 occasion: item.occasion,
-                recognitionSummary: item.recognitionSummary
+                recognitionSummary: item.recognitionSummary,
+                editSource: editSource,
+                material: item.material ?? "",
+                length: item.length ?? "",
+                sleeveLength: item.sleeveLength ?? "",
+                occasionBefore: occasionBefore,
+                occasionThresholdAtEdit: occasionThresholdAtEdit,
+                occasionThresholdsAtEdit: occasionThresholdsAtEdit
             )
             let updated: ClothingItemDTO = try await apiClient.patch(Self.itemPath(item.id), token: token, body: request)
             replace(updated)
+            return true
         } catch {
             errorMessage = Self.userFacingError(error)
+            return false
         }
     }
 
-    func replaceImage(_ imageData: Data, itemID: UUID, token: String?) async -> ItemImageReplaceResult {
+    func replaceImage(
+        _ imageData: Data,
+        itemID: UUID,
+        editMetadata: ImageEditMetadataDTO?,
+        token: String?
+    ) async -> ItemImageReplaceResult {
         errorMessage = nil
         let existingItem = items.first(where: { $0.id == itemID })
         let ownedInputData = Self.ownedDataCopy(imageData)
@@ -189,7 +231,12 @@ final class ClosetViewModel: ObservableObject {
                 "normalized_bytes=\(ownedInputData.count)",
                 "token_present=\(token != nil)"
             )
-            let updated = try await apiClient.replaceItemImage(ownedInputData, itemID: itemID, token: token)
+            let updated = try await apiClient.replaceItemImage(
+                ownedInputData,
+                itemID: itemID,
+                editMetadata: editMetadata,
+                token: token
+            )
             print(
                 "[ClosetViewModel] replaceImage success",
                 "requested_item_id=\(itemID.uuidString)",
@@ -257,7 +304,6 @@ final class ClosetViewModel: ObservableObject {
                 recentItems: remainingRecentItems
             )
         }
-        stopPollingIfNoPendingItems()
     }
 
     private func replace(_ item: ClothingItemDTO) {
@@ -282,25 +328,38 @@ final class ClosetViewModel: ObservableObject {
     }
 
     func pausePolling() {
+        pollingEnabled = false
+        pollingTokenProvider = nil
         pollingTask?.cancel()
         pollingTask = nil
     }
 
-    func resumePollingIfNeeded(token: String?) {
+    func resumePollingIfNeeded(token: String?, tokenProvider: @escaping () async -> String?) {
+        pollingTokenProvider = tokenProvider
+        pollingEnabled = true
         startPollingIfNeeded(token: token)
     }
 
-    private func startPollingIfNeeded(token: String?) {
-        guard items.contains(where: \.isRecognitionPending) else {
-            pollingTask?.cancel()
-            pollingTask = nil
-            return
-        }
+    func startPollingIfNeeded(token: String?) {
+        guard pollingEnabled else { return }
         guard pollingTask == nil else { return }
         pollingTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 2_500_000_000)
-                await self?.refreshItemsDuringPolling(token: token)
+                let pending = self?.items.contains(where: \.isRecognitionPending) ?? false
+                do {
+                    try await Task.sleep(nanoseconds: pending ? 2_500_000_000 : 15_000_000_000)
+                } catch { return }
+                guard !Task.isCancelled else { return }
+                // A poll can outlive the access token captured when this view opened.
+                // Resolve/refresh the session on every iteration before sending.
+                guard let provider = self?.pollingTokenProvider,
+                      let freshToken = await provider() else {
+                    self?.errorMessage = "Session expired. Please sign in again."
+                    self?.pausePolling()
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                await self?.refreshItemsDuringPolling(token: freshToken)
             }
         }
     }
@@ -308,36 +367,15 @@ final class ClosetViewModel: ObservableObject {
     private func refreshItemsDuringPolling(token: String?) async {
         do {
             let refreshed: [ClothingItemDTO] = try await apiClient.get("/api/v1/items", token: token)
+            guard !Task.isCancelled, pollingEnabled else { return }
             items = refreshed
             summary = Self.reconciledSummary(summary, using: refreshed)
-            if !refreshed.contains(where: \.isRecognitionPending) {
-                pollingTask?.cancel()
-                pollingTask = nil
-            }
         } catch {
             errorMessage = Self.userFacingError(error)
         }
     }
 
-    private func stopPollingIfNoPendingItems() {
-        guard !items.contains(where: \.isRecognitionPending) else { return }
-        pollingTask?.cancel()
-        pollingTask = nil
-    }
-
-    private static func normalizedJPEGData(from data: Data) -> Data {
-        guard let image = UIImage(data: data),
-              let jpeg = image.jpegData(compressionQuality: 0.86) else {
-            return data
-        }
-        return jpeg
-    }
-
-    private static func ownedDataCopy(_ data: Data) -> Data {
-        data.withUnsafeBytes { Data($0) }
-    }
-
-    private static func userFacingError(_ error: Error) -> String {
+    static func userFacingError(_ error: Error) -> String {
         let message = error.localizedDescription
         if message.contains("schema cache") || message.contains("PGRST204") {
             return "Upload failed because the database schema is not up to date. Run the latest SQL migrations."
@@ -360,7 +398,7 @@ final class ClosetViewModel: ObservableObject {
         message.localizedCaseInsensitiveContains("not found")
     }
 
-    private static func reconciledSummary(_ summary: ClosetSummaryDTO?, using items: [ClothingItemDTO]) -> ClosetSummaryDTO? {
+    static func reconciledSummary(_ summary: ClosetSummaryDTO?, using items: [ClothingItemDTO]) -> ClosetSummaryDTO? {
         guard summary != nil else { return nil }
         let categoryCounts = Dictionary(grouping: items, by: \.category).mapValues(\.count)
         return ClosetSummaryDTO(
@@ -406,21 +444,21 @@ enum ClosetViewMode {
     case grid
 }
 
-private extension Array where Element == ClothingItemDTO {
+extension Array where Element == ClothingItemDTO {
     func uniqueById() -> [ClothingItemDTO] {
         var seen = Set<UUID>()
         return filter { seen.insert($0.id).inserted }
     }
 }
 
-private extension Array where Element == String {
+extension Array where Element == String {
     func uniqueStrings() -> [String] {
         var seen = Set<String>()
         return filter { seen.insert($0).inserted }
     }
 }
 
-private extension Array {
+extension Array {
     func chunked(into size: Int) -> [[Element]] {
         guard size > 0 else { return [self] }
         var chunks: [[Element]] = []

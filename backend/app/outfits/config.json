@@ -1,0 +1,23 @@
+{
+  "generation_model": "gpt-4.1-mini",
+  "evaluation_model": "gpt-4.1-mini",
+  "pipeline_mode": "vision_then_visual",
+  "image_detail": "low",
+  "catalog_limit": 40,
+  "candidates_per_anchor": 8,
+  "max_items_per_outfit": 6,
+  "request_timeout_seconds": 120,
+  "lease_seconds": 3600,
+  "max_attempts": 3,
+  "poll_seconds": 5,
+  "generation_prompt": "prompts/generate.txt",
+  "evaluation_prompt": "prompts/evaluate.txt",
+  "require_shoes": true,
+  "footwear_pipeline": true,
+  "footwear_catalog_limit": 8,
+  "vision_footwear_limit": 4,
+  "footwear_selection_model": "gpt-4.1-mini",
+  "accessory_pipeline": true,
+  "accessory_catalog_limit": 8,
+  "vision_accessory_limit": 4
+}

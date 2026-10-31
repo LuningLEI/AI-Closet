@@ -4,11 +4,11 @@ from __future__ import annotations
 API_V1_PREFIX = "/api/v1"
 
 DEFAULT_USER_ID = "00000000-0000-4000-8000-000000000001"
-PIPELINE_NAME = "web-fastapi-agent-demo"
+PIPELINE_NAME = "ai-closet-production"
 
 DEFAULT_CATEGORY = "Uncategorized"
 DEFAULT_COLOR = "Unknown"
-DEFAULT_SEASON = "All-Season"
+DEFAULT_SEASON = "Spring, Summer, Fall, Winter"
 DEFAULT_STYLE = "Casual"
 DEFAULT_OCCASION = "Everyday"
 DEFAULT_TEMPERATURE_F = 68.0
@@ -59,7 +59,7 @@ class RecognitionSource:
 
 class WeatherSource:
     MANUAL_LOCATION = "manual-location"
-    BROWSER_GEOLOCATION = "browser-geolocation"
+    DEVICE_GEOLOCATION = "device-geolocation"
     IP_GEOLOCATION = "ip-geolocation"
     OPEN_METEO = "open-meteo"
     WEATHER_GOV = "weather.gov"

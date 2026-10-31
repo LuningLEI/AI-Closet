@@ -9,17 +9,31 @@
 *.py[cod]
 __pycache__/
 **/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+**/.mypy_cache/
+.ruff_cache/
+**/.ruff_cache/
+
+# Local editor and OS state
+.vscode/
+.idea/
+*.swp
 
 backend/data/
+backend/baseline_runs/
+backend/comparison_runs/
+backend/evaluation_templates/
 closet_picture/
 
-web/.next/
-web/.next.bak-*/
-web/node_modules/
-web/.env.local
 
 ios/artifacts/
 ios/build/
 ios/**/*.xcuserstate
 ios/**/xcuserdata/
 ios/**/DerivedData/
+ios/**/*.xcresult/
+
+# Private evaluation workbooks, images and model outputs
+evaluation/*/

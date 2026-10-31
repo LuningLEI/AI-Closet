@@ -27,6 +27,50 @@
         }
       }
     },
+    "/api/v1/ready": {
+      "get": {
+        "summary": "Readiness",
+        "operationId": "readiness_api_v1_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Readiness Api V1 Ready Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/metrics": {
+      "get": {
+        "summary": "Metrics",
+        "operationId": "metrics_api_v1_admin_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "type": "object",
+                  "title": "Response Metrics Api V1 Admin Metrics Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/storage/signed-url-contract": {
       "get": {
         "summary": "Signed Url Contract",
@@ -103,6 +147,122 @@
         }
       }
     },
+    "/api/v1/items/{item_id}": {
+      "get": {
+        "summary": "Get Item",
+        "operationId": "get_item_api_v1_items__item_id__get",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClothingItemRecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update Item",
+        "operationId": "update_item_api_v1_items__item_id__patch",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClothingItemUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClothingItemRecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Item",
+        "operationId": "delete_item_api_v1_items__item_id__delete",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/summary": {
       "get": {
         "summary": "Closet Summary",
@@ -114,6 +274,131 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ClosetSummaryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/items/{item_id}/image": {
+      "post": {
+        "summary": "Replace Item Image",
+        "operationId": "replace_item_image_api_v1_items__item_id__image_post",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_replace_item_image_api_v1_items__item_id__image_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClothingItemRecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/items/upload": {
+      "post": {
+        "summary": "Upload Item",
+        "operationId": "upload_item_api_v1_items_upload_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_item_api_v1_items_upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClothingItemRecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/items/upload-batch": {
+      "post": {
+        "summary": "Upload Items",
+        "operationId": "upload_items_api_v1_items_upload_batch_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_items_api_v1_items_upload_batch_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchUploadResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -307,144 +592,83 @@
         }
       }
     },
-    "/api/v1/items/{item_id}": {
-      "patch": {
-        "summary": "Update Item",
-        "operationId": "update_item_api_v1_items__item_id__patch",
+    "/api/v1/today/weather": {
+      "get": {
+        "summary": "Today Weather",
+        "operationId": "today_weather_api_v1_today_weather_get",
         "parameters": [
           {
-            "name": "item_id",
-            "in": "path",
-            "required": true,
+            "name": "latitude",
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": "string",
-              "title": "Item Id"
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Latitude"
+            }
+          },
+          {
+            "name": "longitude",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Longitude"
+            }
+          },
+          {
+            "name": "location",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Location"
+            }
+          },
+          {
+            "name": "location_label",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Location Label"
             }
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ClothingItemUpdateRequest"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ClothingItemRecord"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "summary": "Delete Item",
-        "operationId": "delete_item_api_v1_items__item_id__delete",
-        "parameters": [
-          {
-            "name": "item_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Item Id"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/items/upload": {
-      "post": {
-        "summary": "Upload Item",
-        "operationId": "upload_item_api_v1_items_upload_post",
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_upload_item_api_v1_items_upload_post"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClothingItemRecord"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/items/upload-batch": {
-      "post": {
-        "summary": "Upload Items",
-        "operationId": "upload_items_api_v1_items_upload_batch_post",
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_upload_items_api_v1_items_upload_batch_post"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BatchUploadResponse"
+                  "$ref": "#/components/schemas/TodayWeatherResponse"
                 }
               }
             }
@@ -538,6 +762,381 @@
         }
       }
     },
+    "/api/v1/outfits": {
+      "get": {
+        "tags": [
+          "Outfit library"
+        ],
+        "summary": "List Outfits",
+        "operationId": "list_outfits_api_v1_outfits_get",
+        "parameters": [
+          {
+            "name": "anchor_item_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Anchor Item Id"
+            }
+          },
+          {
+            "name": "liked_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Liked Only"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 30,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/outfits/build": {
+      "post": {
+        "tags": [
+          "Outfit library"
+        ],
+        "summary": "Build Outfits",
+        "operationId": "build_outfits_api_v1_outfits_build_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/outfits/taste-profile": {
+      "get": {
+        "tags": [
+          "Outfit library"
+        ],
+        "summary": "Taste Profile",
+        "operationId": "taste_profile_api_v1_outfits_taste_profile_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Outfit library"
+        ],
+        "summary": "Reset Taste Profile",
+        "operationId": "reset_taste_profile_api_v1_outfits_taste_profile_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/outfits/personal": {
+      "post": {
+        "tags": [
+          "Outfit library"
+        ],
+        "summary": "Save Personal",
+        "operationId": "save_personal_api_v1_outfits_personal_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonalOutfitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutfitDTO"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/outfits/wear": {
+      "post": {
+        "tags": [
+          "Outfit library"
+        ],
+        "summary": "Wear Outfit",
+        "operationId": "wear_outfit_api_v1_outfits_wear_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WearRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WearEvent"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/outfits/wear/status": {
+      "get": {
+        "tags": [
+          "Outfit library"
+        ],
+        "summary": "Wear Status",
+        "operationId": "wear_status_api_v1_outfits_wear_status_get",
+        "parameters": [
+          {
+            "name": "wear_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "Wear Date"
+            }
+          },
+          {
+            "name": "item_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "default": [],
+              "title": "Item Ids"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WearStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/outfits/wear/{event_id}": {
+      "delete": {
+        "tags": [
+          "Outfit library"
+        ],
+        "summary": "Undo Wear",
+        "operationId": "undo_wear_api_v1_outfits_wear__event_id__delete",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/outfits/feedback": {
+      "post": {
+        "tags": [
+          "Outfit library"
+        ],
+        "summary": "Record Feedback",
+        "operationId": "record_feedback_api_v1_outfits_feedback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutfitFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutfitFeedbackEvent"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/": {
       "get": {
         "summary": "Root",
@@ -611,6 +1210,31 @@
         ],
         "title": "BatchUploadResponse"
       },
+      "Body_replace_item_image_api_v1_items__item_id__image_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          },
+          "edit_metadata": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edit Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_replace_item_image_api_v1_items__item_id__image_post"
+      },
       "Body_upload_item_api_v1_items_upload_post": {
         "properties": {
           "file": {
@@ -634,6 +1258,17 @@
             },
             "type": "array",
             "title": "Files"
+          },
+          "upload_ids": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upload Ids"
           }
         },
         "type": "object",
@@ -655,6 +1290,49 @@
           "file"
         ],
         "title": "Body_upload_profile_avatar_api_v1_profile_avatar_post"
+      },
+      "BuildRequest": {
+        "properties": {
+          "anchor_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchor Item Id"
+          },
+          "retry_failed": {
+            "type": "boolean",
+            "title": "Retry Failed",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "BuildRequest"
+      },
+      "BuildResponse": {
+        "properties": {
+          "queued": {
+            "type": "integer",
+            "title": "Queued"
+          },
+          "jobs": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Jobs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "queued",
+          "jobs"
+        ],
+        "title": "BuildResponse"
       },
       "ChatRequest": {
         "properties": {
@@ -799,7 +1477,7 @@
           "season": {
             "type": "string",
             "title": "Season",
-            "default": "All-Season"
+            "default": "Spring, Summer, Fall, Winter"
           },
           "style": {
             "type": "string",
@@ -1051,6 +1729,87 @@
               }
             ],
             "title": "Recognition Summary"
+          },
+          "material": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material"
+          },
+          "length": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Length"
+          },
+          "sleeve_length": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleeve Length"
+          },
+          "edit_source": {
+            "type": "string",
+            "enum": [
+              "ios",
+              "unknown",
+              "ios_card_open"
+            ],
+            "title": "Edit Source",
+            "default": "unknown"
+          },
+          "occasion_before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occasion Before"
+          },
+          "occasion_threshold_at_edit": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occasion Threshold At Edit"
+          },
+          "occasion_thresholds_at_edit": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occasion Thresholds At Edit"
           }
         },
         "type": "object",
@@ -1076,8 +1835,369 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "LibraryResponse": {
+        "properties": {
+          "outfits": {
+            "items": {
+              "$ref": "#/components/schemas/OutfitDTO"
+            },
+            "type": "array",
+            "title": "Outfits"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "jobs": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Jobs"
+          },
+          "enrolled": {
+            "type": "boolean",
+            "title": "Enrolled"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "outfits",
+          "total",
+          "jobs",
+          "enrolled"
+        ],
+        "title": "LibraryResponse"
+      },
+      "OutfitDTO": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "generated"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ClothingItemRecord"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "optional_additions": {
+            "items": {
+              "$ref": "#/components/schemas/OutfitVariantDTO"
+            },
+            "type": "array",
+            "title": "Optional Additions"
+          },
+          "aesthetic_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aesthetic Score"
+          },
+          "structural_reason": {
+            "type": "string",
+            "title": "Structural Reason"
+          },
+          "aesthetic_reason": {
+            "type": "string",
+            "title": "Aesthetic Reason"
+          },
+          "visual_review_status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "passed"
+            ],
+            "title": "Visual Review Status",
+            "default": "pending"
+          },
+          "liked": {
+            "type": "boolean",
+            "title": "Liked",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "items",
+          "aesthetic_score",
+          "structural_reason",
+          "aesthetic_reason"
+        ],
+        "title": "OutfitDTO"
+      },
+      "OutfitFeedbackEvent": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "outfit_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outfit Id"
+          },
+          "item_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "minItems": 1,
+            "title": "Item Ids"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "liked",
+              "disliked"
+            ],
+            "title": "Action"
+          },
+          "reason_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 4,
+            "title": "Reason Codes"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "surface": {
+            "type": "string",
+            "enum": [
+              "today",
+              "library",
+              "recommendations",
+              "chat"
+            ],
+            "title": "Surface"
+          },
+          "context": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Context"
+          },
+          "target_item_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Target Item Ids"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "composition_signature": {
+            "type": "string",
+            "title": "Composition Signature"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "item_ids",
+          "action",
+          "surface",
+          "user_id",
+          "composition_signature"
+        ],
+        "title": "OutfitFeedbackEvent"
+      },
+      "OutfitFeedbackRequest": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "outfit_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outfit Id"
+          },
+          "item_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "minItems": 1,
+            "title": "Item Ids"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "liked",
+              "disliked"
+            ],
+            "title": "Action"
+          },
+          "reason_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 4,
+            "title": "Reason Codes"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "surface": {
+            "type": "string",
+            "enum": [
+              "today",
+              "library",
+              "recommendations",
+              "chat"
+            ],
+            "title": "Surface"
+          },
+          "context": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Context"
+          },
+          "target_item_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Target Item Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "item_ids",
+          "action",
+          "surface"
+        ],
+        "title": "OutfitFeedbackRequest"
+      },
       "OutfitRecommendationRecord": {
         "properties": {
+          "outfit_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outfit Id"
+          },
+          "original_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Score"
+          },
+          "wear_penalty": {
+            "type": "number",
+            "title": "Wear Penalty",
+            "default": 0
+          },
+          "personalization_score": {
+            "type": "number",
+            "title": "Personalization Score",
+            "default": 0
+          },
+          "taste_profile_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taste Profile Version"
+          },
           "id": {
             "type": "string",
             "title": "Id"
@@ -1132,6 +2252,67 @@
           "items"
         ],
         "title": "OutfitRecommendationRecord"
+      },
+      "OutfitVariantDTO": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ClothingItemRecord"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "visual_review_status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "passed"
+            ],
+            "title": "Visual Review Status",
+            "default": "pending"
+          },
+          "liked": {
+            "type": "boolean",
+            "title": "Liked",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "items"
+        ],
+        "title": "OutfitVariantDTO"
+      },
+      "PersonalOutfitRequest": {
+        "properties": {
+          "item_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "minItems": 1,
+            "title": "Item Ids"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title",
+            "default": "My outfit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "item_ids"
+        ],
+        "title": "PersonalOutfitRequest"
       },
       "QueueErrorSummary": {
         "properties": {
@@ -1443,6 +2624,20 @@
             },
             "type": "object",
             "title": "Subtypes"
+          },
+          "lengths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lengths"
+          },
+          "sleeve_lengths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sleeve Lengths"
           }
         },
         "type": "object",
@@ -1452,7 +2647,9 @@
           "styles",
           "occasions",
           "seasons",
-          "subtypes"
+          "subtypes",
+          "lengths",
+          "sleeve_lengths"
         ],
         "title": "TaxonomyResponse"
       },
@@ -1483,6 +2680,22 @@
           "recommendations"
         ],
         "title": "TodayRecommendationResponse"
+      },
+      "TodayWeatherResponse": {
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/WeatherLocationResponse"
+          },
+          "weather": {
+            "$ref": "#/components/schemas/WeatherResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "location",
+          "weather"
+        ],
+        "title": "TodayWeatherResponse"
       },
       "UploadQueueStatus": {
         "properties": {
@@ -1608,6 +2821,16 @@
             "type": "array",
             "title": "Style Preferences"
           },
+          "occasion_style_preferences": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Occasion Style Preferences"
+          },
           "selected_categories": {
             "items": {
               "type": "string"
@@ -1621,6 +2844,11 @@
             },
             "type": "array",
             "title": "Custom Categories"
+          },
+          "taxonomy_customizations": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Taxonomy Customizations"
           },
           "model_training_consent": {
             "type": "boolean",
@@ -1800,6 +3028,23 @@
             ],
             "title": "Style Preferences"
           },
+          "occasion_style_preferences": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occasion Style Preferences"
+          },
           "selected_categories": {
             "anyOf": [
               {
@@ -1827,6 +3072,18 @@
               }
             ],
             "title": "Custom Categories"
+          },
+          "taxonomy_customizations": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taxonomy Customizations"
           },
           "model_training_consent": {
             "anyOf": [
@@ -1950,6 +3207,149 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "WearEvent": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "item_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "minItems": 1,
+            "title": "Item Ids"
+          },
+          "worn_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Worn At"
+          },
+          "wear_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wear Date"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "item_ids",
+          "worn_at",
+          "user_id"
+        ],
+        "title": "WearEvent"
+      },
+      "WearRequest": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "item_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "minItems": 1,
+            "title": "Item Ids"
+          },
+          "worn_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Worn At"
+          },
+          "wear_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wear Date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "item_ids",
+          "worn_at"
+        ],
+        "title": "WearRequest"
+      },
+      "WearStatus": {
+        "properties": {
+          "selected_today": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WearEvent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selected_today_items": {
+            "items": {
+              "$ref": "#/components/schemas/ClothingItemRecord"
+            },
+            "type": "array",
+            "title": "Selected Today Items"
+          },
+          "latest_worn_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Worn At"
+          },
+          "liked": {
+            "type": "boolean",
+            "title": "Liked",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "WearStatus"
       },
       "WeatherLocationResponse": {
         "properties": {

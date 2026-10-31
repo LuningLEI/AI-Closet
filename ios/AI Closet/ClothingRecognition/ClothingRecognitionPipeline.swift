@@ -1,5 +1,6 @@
 import Foundation
 
+@MainActor
 struct ClothingRecognitionPipeline {
     private let apiService = GeminiClothingRecognitionService()
     private let localClassifier = LocalCategoryClassifier()
@@ -18,9 +19,9 @@ struct ClothingRecognitionPipeline {
             category: category,
             subtype: nil,
             color: "Unknown",
-            seasons: ["All-Season"],
-            style: "Casual",
-            occasion: "Everyday",
+            seasons: Set(ClothingTaxonomySupport.seasons),
+            style: ClothingTaxonomySupport.styles.first ?? "Unknown",
+            occasion: ClothingTaxonomySupport.occasions.first ?? "Unknown",
             confidence: nil,
             summary: nil,
             source: "Local Fallback",
