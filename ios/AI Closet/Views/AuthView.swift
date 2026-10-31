@@ -90,6 +90,7 @@ struct AuthView: View {
     }
 }
 
+@MainActor
 private enum AuthMode {
     case signIn
     case signUp
