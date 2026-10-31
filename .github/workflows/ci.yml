@@ -8,13 +8,13 @@ on:
 jobs:
   backend-quality:
     name: Backend lint, types, tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
@@ -25,7 +25,7 @@ jobs:
       - name: Type-check production code
         run: mypy --follow-imports=skip app/ai/gateway.py app/core/runtime_snapshot.py app/services/recommendation/application.py app/api/routes/recommendations.py
       - name: Unit and contract tests
-        run: pytest
+        run: python -m pytest tests
       - name: Import and compile API/workers/tools
         run: |
           python -m compileall app workers tools
@@ -33,11 +33,11 @@ jobs:
 
   api-contract:
     name: OpenAPI contract is current
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: backend-quality
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - run: pip install -r backend/requirements.lock
@@ -46,25 +46,27 @@ jobs:
 
   documentation:
     name: Documentation links
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - run: python scripts/check_markdown_links.py .
 
   migrations:
     name: Migration structure
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: python backend/scripts/check_migrations.py
 
   ios:
     name: iOS build
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          lfs: true
       - name: Build iOS target without signing
         run: xcodebuild -project "ios/AI Closet.xcodeproj" -scheme "AI Closet" -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build

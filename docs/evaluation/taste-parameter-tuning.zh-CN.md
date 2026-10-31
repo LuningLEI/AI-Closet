@@ -13,7 +13,7 @@
 }
 ```
 
-配置文件在 [`evaluation/taste/simulation/custom_config.json`](../../evaluation/taste/simulation/custom_config.json)。修改后运行：
+配置文件生成在 `evaluation/taste/simulation/custom_config.json`（本地评估产物，不提交到 Git）。修改后运行：
 
 ```bash
 make taste-simulation-custom

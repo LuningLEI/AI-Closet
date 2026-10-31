@@ -48,7 +48,7 @@ Changing only the personalization scale from 4 to 1 reduced final saturation to 
 
 Evidence thresholds mostly controlled cold-start speed: thresholds 2, 3, and 5 activated after approximately 3.7, 5.2, and 9.2 opportunities. Their long-run ranking differences were small once the default scale saturated. Exploration and decay comparisons are also partially masked by saturation and should be repeated after selecting a non-saturating scoring formulation.
 
-Full results and confidence intervals are in [`evaluation/taste/simulation/summary.csv`](../../evaluation/taste/simulation/summary.csv). Aggregated learning trajectories and SVG figures are stored in the same directory.
+Full results and confidence intervals are generated locally at `evaluation/taste/simulation/summary.csv`. Aggregated learning trajectories and SVG figures are stored in the same ignored output directory.
 
 ## Interpretation boundary
 
