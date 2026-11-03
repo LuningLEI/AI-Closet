@@ -11,6 +11,7 @@ from this directory.
 | Recognition | `recognition/audit-YYYYMMDD/` | Date-scoped recognition audits |
 | Outfits | `outfits/comparison_runs/<run-id>/` | Model and pipeline comparison runs |
 | Outfits | `outfits/library_pilot/` | Human outfit-library annotations and provenance |
+| Outfits | `outfits/outerwear_shadow/` | Read-only outerwear distributions and stratified human-review workbooks |
 | Taste | `taste/simulation/` | Default-parameter learning simulations |
 | Taste | `taste/parameter_search/` | Parameter search and validation results |
 | Taste | `taste/before_after/<date>/` | Paired pre-learning and post-learning exports |

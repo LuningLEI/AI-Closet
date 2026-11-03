@@ -13,6 +13,7 @@ from app.core.constants import (
 )
 from app.models.domain import ClothingItemRecord
 from app.services.occasion_support import effective_occasion
+from app.services.layering_fit import assess_layering_pair
 
 
 def recommendation_slot(category: str, subtype: str | None = None) -> str:
@@ -66,6 +67,8 @@ def top_layer(item: ClothingItemRecord) -> str:
 
 def layers_compatible(inner: ClothingItemRecord, outer: ClothingItemRecord) -> bool:
     if inner.wearing_profile['can_layer_under'] is False or outer.wearing_profile['can_layer_over'] is False:
+        return False
+    if assess_layering_pair(inner, outer).hard_failure:
         return False
     if inner.wearing_profile['can_layer_under'] is True and outer.wearing_profile['can_layer_over'] is True:
         return True

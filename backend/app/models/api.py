@@ -100,7 +100,9 @@ class ImageEditMetadata(BaseModel):
 
 
 class RecommendationsRequest(RecommendationContext):
-    pass
+    # Ephemeral client-page seed. It changes presentation among near-tied
+    # results without becoming part of the durable recommendation context.
+    rotation_seed: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class RecommendationsResponse(BaseModel):
@@ -156,6 +158,11 @@ class UserPreferencesResponse(BaseModel):
     custom_categories: list[str] = Field(default_factory=list)
     taxonomy_customizations: dict[str, Any] = Field(default_factory=dict)
     model_training_consent: bool = False
+    personalization_enabled: bool = True
+    feedback_learning_enabled: bool = True
+    exploration_level: Literal["familiar", "balanced", "adventurous"] = "balanced"
+    rotation_level: Literal["repeat_freely", "balanced", "more_variety"] = "balanced"
+    temperature_sensitivity: Literal["runs_cold", "neutral", "runs_warm"] = "neutral"
     profile_features: dict[str, Any] = Field(default_factory=dict)
     default_location_label: str | None = None
     default_latitude: float | None = None
@@ -180,6 +187,11 @@ class UserPreferencesUpdateRequest(BaseModel):
     custom_categories: list[str] | None = None
     taxonomy_customizations: dict[str, Any] | None = None
     model_training_consent: bool | None = None
+    personalization_enabled: bool | None = None
+    feedback_learning_enabled: bool | None = None
+    exploration_level: Literal["familiar", "balanced", "adventurous"] | None = None
+    rotation_level: Literal["repeat_freely", "balanced", "more_variety"] | None = None
+    temperature_sensitivity: Literal["runs_cold", "neutral", "runs_warm"] | None = None
     profile_features: dict[str, Any] | None = None
     default_location_label: str | None = None
     default_latitude: float | None = None

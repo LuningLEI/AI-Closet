@@ -221,7 +221,8 @@ final class RecommendationViewModel: NSObject, ObservableObject, CLLocationManag
                 temperatureF: temperatureF,
                 preferredStyle: selectedStyle == "Any" ? nil : selectedStyle,
                 preferredColor: selectedColor == "Any" ? nil : selectedColor,
-                limit: 5
+                limit: 5,
+                rotationSeed: UUID().uuidString
             )
             let response: RecommendationsResponseDTO = try await apiClient.post("/api/v1/recommendations", token: token, body: request)
             recommendations = response.recommendations
@@ -251,7 +252,8 @@ final class RecommendationViewModel: NSObject, ObservableObject, CLLocationManag
             temperatureF: weather.feelsLikeF,
             preferredStyle: nil,
             preferredColor: nil,
-            limit: 5
+            limit: 5,
+            rotationSeed: UUID().uuidString
         )
 
         do {

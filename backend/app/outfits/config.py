@@ -6,6 +6,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing import Literal
 
+from app.services.layering_fit import LayeringFitPolicy
+
 HERE = Path(__file__).resolve().parent
 
 def digest(value) -> str:
@@ -47,6 +49,7 @@ class OutfitConfig(BaseModel):
     evaluation_model: str
     image_detail: Literal['low', 'high', 'auto'] = 'low'
     compatibility_rules: CompatibilityRules = Field(default_factory=CompatibilityRules)
+    layering_fit_policy: LayeringFitPolicy = Field(default_factory=LayeringFitPolicy)
     pipeline_mode: Literal['vision_then_visual'] = 'vision_then_visual'
     visual_review_prompt: str = 'prompts/review_visual.txt'
     # Missing in archived run snapshots: retain their historical policy.
@@ -96,6 +99,7 @@ class OutfitConfig(BaseModel):
         base = [self.generation_model, self.generation_text, self.evaluator_key,
                        self.catalog_limit, self.candidates_per_anchor, self.max_items_per_outfit, 'outfit-core-vision-v1',
                        'vector-catalog-v4-thermal-standalone-outerwear', self.require_shoes, self.catalog_rules.model_dump(),
+                       self.layering_fit_policy.model_dump(),
                        self.footwear_pipeline,self.clothing_text,self.footwear_catalog_limit,
                        self.footwear_selection_model,self.footwear_selection_text]
         base += ['accessories-v1', self.accessory_catalog_limit, self.accessory_selection_text]

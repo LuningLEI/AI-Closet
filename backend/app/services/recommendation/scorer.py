@@ -23,6 +23,8 @@ from app.services.recommendation.models import Candidate
 from app.services.recommendation.rules import allowed_seasons, item_occasion_tokens, tights_layering_valid
 from app.services.taxonomy import preferred_styles_for_occasion
 from app.services.taste_profile import outfit_taste_score
+from app.services.personalization_settings import effective_temperature_f, resolve_personalization_settings
+from app.services.layering_fit import assess_outfit_layering
 
 
 class CandidateScorer:
@@ -37,6 +39,7 @@ class CandidateScorer:
         preferences: dict | None = None,
         *,
         trusted_user_outfit: bool = False,
+        prevalidated_library_outfit: bool = False,
         taste_profile: dict | None = None,
     ) -> OutfitRecommendationRecord | None:
         if not trusted_user_outfit and not tights_layering_valid(candidate.items):
@@ -51,13 +54,18 @@ class CandidateScorer:
         breakdown.occasion_fit, occasion_reason = self._occasion_score(candidate, context)
         reasons.append(occasion_reason)
 
-        breakdown.weather_fit, weather_reason = self._weather_score(candidate, context.temperature_f)
+        settings = resolve_personalization_settings(preferences)
+        styling_temperature = effective_temperature_f(context.temperature_f, settings)
+        styling_context = context.model_copy(update={"temperature_f": styling_temperature})
+        breakdown.weather_fit, weather_reason = self._weather_score(candidate, styling_temperature)
         reasons.append(weather_reason)
 
         style_preferences = (
             [context.preferred_style]
             if context.preferred_style
             else preferred_styles_for_occasion(preferences, context.occasion)
+            if settings.personalization_enabled
+            else []
         )
         breakdown.style_harmony, style_reason = self._style_score(candidate, style_preferences)
         reasons.append(style_reason)
@@ -70,16 +78,35 @@ class CandidateScorer:
             if color_preference_reason:
                 reasons.append(color_preference_reason)
 
-        breakdown.category_balance, missing_slots = self._completeness_score(candidate, context)
+        breakdown.category_balance, missing_slots = self._completeness_score(candidate, styling_context)
         if missing_slots:
             styling_notes.append(f"Could improve with: {', '.join(missing_slots)}.")
         else:
             reasons.append("Builds a complete outfit instead of isolated pieces.")
 
-        if not trusted_user_outfit and breakdown.total <= MIN_RECOMMENDATION_SCORE:
+        layering = assess_outfit_layering(candidate.items)
+        if layering:
+            if layering.hard_failure and not trusted_user_outfit:
+                return None
+            breakdown.layering_fit = -layering.penalty
+            if layering.penalty:
+                reasons.append("Layering room is limited: " + "; ".join(layering.reasons[:2]) + ".")
+
+        # A saved generated outfit has already passed structural rules and visual
+        # review.  Today's occasion and temperature should change its rank, not
+        # erase it from the reusable library-backed recommendation pool.
+        if (
+            not trusted_user_outfit
+            and not prevalidated_library_outfit
+            and breakdown.total <= MIN_RECOMMENDATION_SCORE
+        ):
             return None
 
-        personalization = outfit_taste_score(candidate.items, taste_profile, {"occasion": context.occasion})
+        personalization = (
+            outfit_taste_score(candidate.items, taste_profile, {"occasion": context.occasion})
+            if settings.personalization_enabled and settings.feedback_learning_enabled
+            else 0.0
+        )
         if personalization:
             reasons.append("Adjusted using your learned outfit preferences.")
         return OutfitRecommendationRecord(
@@ -89,7 +116,7 @@ class CandidateScorer:
             personalization_score=round(personalization, 2),
             taste_profile_version=(taste_profile or {}).get("profile_version"),
             reasons=reasons[:3],
-            styling_notes=styling_notes or self._styling_notes(candidate, context),
+            styling_notes=styling_notes or self._styling_notes(candidate, styling_context),
             missing_slots=missing_slots,
             breakdown=breakdown,
             items=candidate.items,

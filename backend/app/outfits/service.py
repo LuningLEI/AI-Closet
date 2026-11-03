@@ -11,7 +11,9 @@ from app.outfits.runs import run_manifest, tracked_call
 from app.outfits.store import now
 from app.services.recommendation.rules import recommendation_slot, layers_compatible, tights_layering_valid
 from app.services.taste_profile_service import TasteProfileService
+from app.services.personalization_settings import exploration_rate, resolve_personalization_settings
 from app.services.taste_profile import exploration_quota_met, generation_taste_context, taste_review_key
+from app.services.layering_fit import assess_outfit_layering
 
 ATTRIBUTES = ('image_path','category','subtype','color','style','material','pattern','fit','length',
               'sleeve_length','neckline','layering_role')
@@ -144,7 +146,15 @@ class OutfitLibrary:
         stats={'generated':0,'invalid':0,'evaluated':0,'cached':0,'passing':0}
         try:
             uid=job['user_id'];items=self.items(uid, include_vectors=True);anchor=items.get(job['anchor_item_id'])
-            self.taste_profile=TasteProfileService(self.store).ensure_current(uid)
+            preference_record=self.repository.get_preferences(uid)
+            settings=resolve_personalization_settings(preference_record.get('preferences'))
+            if settings.personalization_enabled and settings.feedback_learning_enabled:
+                self.taste_profile=TasteProfileService(self.store).ensure_current(uid)
+                memory=dict(self.taste_profile.get('generation_memory') or {})
+                memory['exploration_rate']=exploration_rate(settings)
+                self.taste_profile={**self.taste_profile,'generation_memory':memory}
+            else:
+                self.taste_profile={}
             stats['taste_profile_version']=self.taste_profile.get('profile_version',0)
             if not anchor or revision(anchor)!=job['revision'] or job['generation_key']!=self.config.generation_key:
                 self.store.finish(job,'obsolete',stats);return
@@ -197,8 +207,10 @@ class OutfitLibrary:
                     and 1 <= len(ids) <= self.config.max_items_per_outfit
                     and all(item_id in allowed for item_id in ids)):
                 members = [allowed[item_id] for item_id in ids]
+                layering = assess_outfit_layering(members, self.config.layering_fit_policy)
                 if (not structural_rejection_codes(members, require_shoes=self.config.require_shoes)
-                        and not compatibility_issues(members, self.config.compatibility_rules)):
+                        and not compatibility_issues(members, self.config.compatibility_rules)
+                        and not (layering and layering.hard_failure)):
                     valid.append(proposal)
         if not exploration_quota_met(valid, taste_context):
             raise ValueError('taste_exploration_quota_not_met')
@@ -222,11 +234,14 @@ class OutfitLibrary:
             rejection_codes = structural_rejection_codes(members, require_shoes=self.config.require_shoes)
             compatibility = compatibility_issues(members, self.config.compatibility_rules)
             if compatibility: rejection_codes.append('compatibility_rule')
+            layering = assess_outfit_layering(members, self.config.layering_fit_policy)
+            if layering and layering.hard_failure: rejection_codes.append('physical_layering_capacity_conflict')
             if rejection_codes:
                 stats['invalid'] += 1
                 stats['candidate_diagnostics'].append({'candidate_index': candidate_index, 'item_ids': ids,
                     'status': 'rejected_before_visual_review', 'rejection_codes': rejection_codes,
-                    'compatibility_issues': compatibility})
+                    'compatibility_issues': compatibility,
+                    'layering_reasons': list(layering.reasons) if layering and layering.hard_failure else []})
                 continue
             sig = signature(members)
             rev = combined_revision(members)
@@ -343,7 +358,11 @@ class OutfitLibrary:
             if row['signature'] in reviewed and reviewed[row['signature']]['id']!=row['id']:continue
             members=sorted([items[i] for i in ids],key=order)
             core=core_items(members, require_shoes=self.config.require_shoes)
-            if not structurally_valid(core, require_shoes=self.config.require_shoes) or compatibility_issues(core, self.config.compatibility_rules):continue
+            core_layering = assess_outfit_layering(core, self.config.layering_fit_policy)
+            if (not structurally_valid(core, require_shoes=self.config.require_shoes)
+                    or compatibility_issues(core, self.config.compatibility_rules)
+                    or (core_layering and core_layering.hard_failure)):
+                continue
             sig=signature(core)
             review=core_reviews.get(sig)
             if review and not review.core.passes():continue
@@ -362,7 +381,12 @@ class OutfitLibrary:
                 # removable layers/accessories retain the clear-improvement bar.
                 approved_extras=[i for i in extras if slot(i)=='Outerwear'] \
                     if full_review.optional_layering.verdict=='no_improvement' else []
-            if approved_extras and (full_review is None or full_review.full.passes()) and structurally_valid(core+approved_extras,require_shoes=self.config.require_shoes) and not compatibility_issues(core+approved_extras,self.config.compatibility_rules):
+            full_members = core + approved_extras
+            full_layering = assess_outfit_layering(full_members, self.config.layering_fit_policy)
+            if (approved_extras and (full_review is None or full_review.full.passes())
+                    and structurally_valid(full_members, require_shoes=self.config.require_shoes)
+                    and not compatibility_issues(full_members, self.config.compatibility_rules)
+                    and not (full_layering and full_layering.hard_failure)):
                 group['variants'][signature(approved_extras)]=approved_extras
                 group['variant_status'][signature(approved_extras)]='passed' if full_review else 'pending'
         if anchor_id:

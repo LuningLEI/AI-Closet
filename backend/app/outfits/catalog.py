@@ -7,6 +7,7 @@ from app.outfits.compatibility import slot, compatibility_issues, accessory_role
 from app.outfits.config import digest
 from app.services.recommendation.rules import layers_compatible
 from app.services.taste_profile import item_taste_score
+from app.services.layering_fit import assess_layering_pair
 
 
 def cosine(a,b):
@@ -46,6 +47,11 @@ def exclusion_reason(anchor,item,config):
     lower_pair=lower_layer_pair(anchor,item) or lower_layer_pair(item,anchor)
     if a in {'Tops','Bottoms'} and b=='FullBody' and not lower_pair:return 'one_piece_does_not_complement_separates'
     if a=='FullBody' and b in {'Tops','Bottoms','FullBody'} and not lower_pair:return 'one_piece_already_covers_core'
+    layering_pair = _upper_layering_pair(anchor, item)
+    if layering_pair:
+        assessment = assess_layering_pair(*layering_pair, config.layering_fit_policy)
+        if assessment.hard_failure:
+            return 'physical_layering_capacity_conflict'
     distinct_accessories = a == b == 'Accessories' and accessory_role(anchor) != accessory_role(item)
     if a==b and not distinct_accessories:
         if not lower_pair and (a!='Tops' or not (layers_compatible(anchor,item) or layers_compatible(item,anchor))):
@@ -61,7 +67,18 @@ def rank_score(anchor,item,config):
     semantic=cosine(anchor.semantic_vector,item.semantic_vector)
     metadata=metadata_similarity(anchor,item)
     vector=metadata if semantic is None else semantic
-    return vector+config.catalog_rules.metadata_weight*metadata+config.catalog_rules.preference_weight*pair_priority(anchor,item,config.compatibility_rules)
+    layering = _upper_layering_pair(anchor, item)
+    layering_score = assess_layering_pair(*layering, config.layering_fit_policy).score if layering else 0.0
+    return (vector + config.catalog_rules.metadata_weight * metadata
+            + config.catalog_rules.preference_weight * pair_priority(anchor, item, config.compatibility_rules)
+            + layering_score)
+
+
+def _upper_layering_pair(a, b):
+    roles = {slot(a), slot(b)}
+    if not roles.intersection({'Outerwear'}) or not roles.intersection({'Tops', 'FullBody'}):
+        return None
+    return (b, a) if slot(a) == 'Outerwear' else (a, b)
 
 
 def select_catalog(anchor,items,config,taste_profile=None):

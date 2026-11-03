@@ -305,6 +305,7 @@ struct OutfitComposerView: View {
     @State private var selected: [ClothingItemDTO]
     @State private var title = "My outfit"
     @State private var category = "All categories"
+    @State private var categoryFilterExpanded = false
     @State private var replacing: UUID?
     @State private var saving = false
     @State private var error: String?
@@ -315,6 +316,14 @@ struct OutfitComposerView: View {
     }
     private var candidates: [ClothingItemDTO] {
         closet.items.filter { item in (category == "All categories" || item.category == category) && !selected.contains(where: { s in s.id == item.id }) }
+    }
+    private var availableCategories: [String] {
+        Array(Set(closet.items.map(\.category))).sorted()
+    }
+    private var candidateRows: [[ClothingItemDTO]] {
+        stride(from: 0, to: candidates.count, by: 5).map { start in
+            Array(candidates[start..<min(start + 5, candidates.count)])
+        }
     }
     var body: some View {
         NavigationStack {
@@ -333,23 +342,50 @@ struct OutfitComposerView: View {
                     if replacing != nil { Button("Cancel replacement") { replacing = nil } }
                 }
                 Section(replacing == nil ? "Add from your closet" : "Choose a replacement") {
-                    Picker("Category", selection: $category) {
-                        Text("All categories").tag("All categories")
-                        ForEach(Array(Set(closet.items.map(\.category))).sorted(), id: \.self) { Text($0).tag($0) }
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            categoryFilterExpanded.toggle()
+                        }
+                    } label: {
+                        HStack {
+                            Text("Category").foregroundStyle(.primary)
+                            Spacer()
+                            Text(category).foregroundStyle(.secondary)
+                            Image(systemName: categoryFilterExpanded ? "chevron.up" : "chevron.down")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if categoryFilterExpanded {
+                        categoryOption("All categories")
+                        ForEach(availableCategories, id: \.self) { option in
+                            categoryOption(option)
+                        }
                     }
                     if closet.isLoading { ProgressView() }
-                    ForEach(candidates) { item in
-                        Button {
-                            if let id = replacing, let index = selected.firstIndex(where: { $0.id == id }) { selected[index] = item }
-                            else if selected.count < 12 { selected.append(item) }
-                            replacing = nil
-                        } label: {
-                            HStack {
-                                ClosetAsyncImage(url: item.imageUrl, itemID: item.id).frame(width: 56, height: 70).clipped()
-                                VStack(alignment: .leading) { Text(item.displayTitle); Text(item.color).font(.caption) }
-                                Spacer(); Image(systemName: "plus.circle")
+                    if !closet.isLoading && candidates.isEmpty {
+                        Text("No items in this category")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(candidateRows.enumerated()), id: \.offset) { _, row in
+                            HStack(spacing: 6) {
+                                ForEach(row) { item in
+                                    candidateButton(item)
+                                }
+                                if row.count < 5 {
+                                    ForEach(row.count..<5, id: \.self) { _ in
+                                        Color.clear
+                                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                    }
+                                }
                             }
-                        }.disabled(selected.count >= 12 && replacing == nil)
+                            .frame(height: 60)
+                            .listRowInsets(EdgeInsets(top: 3, leading: 16, bottom: 3, trailing: 16))
+                        }
                     }
                 }
                 if let error = error ?? closet.errorMessage { Text(error).foregroundStyle(.red) }
@@ -361,6 +397,58 @@ struct OutfitComposerView: View {
             }
             .task { await closet.load(token: await authStore.validAccessToken()) }
         }
+    }
+    private func candidateButton(_ item: ClothingItemDTO) -> some View {
+        Button {
+            choose(item)
+        } label: {
+            ClosetAsyncImage(url: item.imageUrl, itemID: item.id)
+                .aspectRatio(1, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: replacing == nil ? "plus.circle.fill" : "arrow.triangle.2.circlepath.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, .blue)
+                        .padding(3)
+                }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .buttonStyle(.plain)
+        .disabled(selected.count >= 12 && replacing == nil)
+        .opacity(selected.count >= 12 && replacing == nil ? 0.45 : 1)
+        .accessibilityLabel("\(replacing == nil ? "Add" : "Replace with") \(item.displayTitle), \(item.category), \(item.color)")
+    }
+    private func choose(_ item: ClothingItemDTO) {
+        if let id = replacing, let index = selected.firstIndex(where: { $0.id == id }) {
+            selected[index] = item
+        } else if selected.count < 12 {
+            selected.append(item)
+        }
+        replacing = nil
+    }
+    private func categoryOption(_ option: String) -> some View {
+        Button {
+            category = option
+            withAnimation(.easeInOut(duration: 0.2)) {
+                categoryFilterExpanded = false
+            }
+        } label: {
+            HStack {
+                Text(option)
+                Spacer()
+                if category == option {
+                    Image(systemName: "checkmark").foregroundStyle(.blue)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
     @MainActor private func save() async {
         saving = true

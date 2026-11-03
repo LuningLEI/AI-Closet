@@ -125,6 +125,13 @@ COOL_WEATHER_F = 65
 MODERATE_WEATHER_F = 72
 LAYERING_MAX_WEATHER_F = 78
 
+# User-facing seasonal comfort policy. Keep these separate from the softer
+# scoring bands above: these values define hard recommendation eligibility.
+WINTER_SEASON_MAX_F = 50.0       # 10 C
+SUMMER_SEASON_MIN_F = 71.6       # 22 C
+EXPOSED_WARM_WEATHER_MIN_F = 77.0  # 25 C
+TEMPERATURE_BOUNDARY_BLEND_F = 3.6  # +/- 2 C
+
 SPARSE_PRIMARY_LIMIT = 6
 SPARSE_SECONDARY_LIMIT = 4
 SPARSE_TERTIARY_LIMIT = 3

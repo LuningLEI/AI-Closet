@@ -55,6 +55,11 @@ class WearingProfile(BaseModel):
     can_layer_under: StrictBool | None = None
     requires_inner_layer: StrictBool | None = None
     closure_type: Literal['pullover', 'buttons', 'zipper', 'open_front', 'wrap', 'other'] | None = None
+    layering_bulk: Literal['low', 'medium', 'high'] | None = None
+    outer_capacity: Literal['low', 'medium', 'high'] | None = None
+    material_stiffness: Literal['soft', 'medium', 'stiff'] | None = None
+    hood_volume: Literal['none', 'low', 'high'] | None = None
+    sleeve_volume: Literal['slim', 'regular', 'voluminous'] | None = None
     wearing_modes: list[Literal['standalone', 'inner_layer', 'outer_layer_closed', 'outer_layer_open']] = Field(default_factory=list)
     evidence: str | None = None
 
@@ -71,6 +76,15 @@ class WearingProfile(BaseModel):
         if self.closure_type == 'pullover' and 'outer_layer_open' in self.wearing_modes:
             raise ValueError('A pullover cannot be worn open')
         return self
+
+
+LAYERING_CAPACITY_FIELDS = frozenset({
+    'layering_bulk',
+    'outer_capacity',
+    'material_stiffness',
+    'hood_volume',
+    'sleeve_volume',
+})
 
 
 class ClothingAnalysis(BaseModel):
@@ -155,7 +169,14 @@ class ClothingItemRecord(BaseModel):
     def wearing_profile(self) -> dict:
         # Persisted inside recognition_tags; no duplicate SQL column or embedding.
         raw = (self.recognition_tags or {}).get('wearing_profile')
-        return WearingProfile.model_validate(raw or {}).model_dump()
+        profile = WearingProfile.model_validate(raw or {}).model_dump()
+        # These capacity fields were added after outfit revisions were already
+        # persisted.  A missing/unknown value must not rewrite every legacy
+        # garment hash; only meaningful newly recognized evidence participates.
+        for field in LAYERING_CAPACITY_FIELDS:
+            if profile.get(field) is None:
+                profile.pop(field, None)
+        return profile
 
 
 class RecognitionRecord(BaseModel):
@@ -244,6 +265,7 @@ class RecommendationBreakdown(BaseModel):
     style_harmony: float = 0
     color_harmony: float = 0
     category_balance: float = 0
+    layering_fit: float = 0
 
     @property
     def total(self) -> float:
@@ -254,6 +276,7 @@ class RecommendationBreakdown(BaseModel):
             + self.style_harmony
             + self.color_harmony
             + self.category_balance
+            + self.layering_fit
         )
 
 

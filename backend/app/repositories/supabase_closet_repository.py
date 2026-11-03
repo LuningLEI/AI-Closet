@@ -318,6 +318,14 @@ class SupabaseClosetRepository:
         # so this feature requires no schema column or migration.
         payload.pop("taxonomy_customizations", None)
         payload.pop("occasion_style_preferences", None)
+        for field in (
+            "personalization_enabled",
+            "feedback_learning_enabled",
+            "exploration_level",
+            "rotation_level",
+            "temperature_sensitivity",
+        ):
+            payload.pop(field, None)
         payload["updated_at"] = datetime.now(timezone.utc).isoformat()
         response = self.client.table(self.preferences_table_name).upsert(payload, on_conflict="user_id").execute()
         rows = response.data or [payload]

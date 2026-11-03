@@ -6,6 +6,7 @@ from typing import Any
 from app.core.constants import DEFAULT_OCCASION, DEFAULT_STYLE
 from app.core.versions import PROFILE_VERSION, STYLE_PREFERENCE_VERSION, TAXONOMY_VERSION
 from app.services.taxonomy import CATEGORIES, default_user_preferences, merge_preferences, normalize_customizations
+from app.services.personalization_settings import PersonalizationSettings
 
 DEFAULT_DAILY_OCCASIONS = [DEFAULT_OCCASION, "Work"]
 DEFAULT_STYLE_PREFERENCES = [DEFAULT_STYLE]
@@ -111,6 +112,17 @@ def normalize_preference_record(record: dict[str, Any]) -> dict[str, Any]:
         bool(memory.get("onboarding_completed", False)),
     )
     model_training_consent = _bool_value(record.get("model_training_consent"), False)
+    recommendation = dict(memory.get("recommendation") or {})
+    for key in (
+        "personalization_enabled",
+        "feedback_learning_enabled",
+        "exploration_level",
+        "rotation_level",
+        "temperature_sensitivity",
+    ):
+        if record.get(key) is not None:
+            recommendation[key] = record[key]
+    personalization = PersonalizationSettings.model_validate(recommendation)
 
     profile_version = str(record.get("profile_version") or PROFILE_VERSION)
     taxonomy_version = str(record.get("taxonomy_version") or TAXONOMY_VERSION)
@@ -139,6 +151,7 @@ def normalize_preference_record(record: dict[str, Any]) -> dict[str, Any]:
             "onboarding_completed": onboarding_completed,
             "profile": profile,
             "taxonomy": taxonomy,
+            "recommendation": personalization.model_dump(),
             "schema_versions": {
                 "profile": profile_version,
                 "taxonomy": taxonomy_version,
@@ -161,6 +174,7 @@ def normalize_preference_record(record: dict[str, Any]) -> dict[str, Any]:
             "custom_categories": custom_categories,
             "taxonomy_customizations": taxonomy_customizations,
             "model_training_consent": model_training_consent,
+            **personalization.model_dump(),
             "versions": memory["schema_versions"],
         }
     )
@@ -183,6 +197,7 @@ def normalize_preference_record(record: dict[str, Any]) -> dict[str, Any]:
         "custom_categories": custom_categories,
         "taxonomy_customizations": taxonomy_customizations,
         "model_training_consent": model_training_consent,
+        **personalization.model_dump(),
         "profile_features": profile_features,
         "default_location_label": record.get("default_location_label"),
         "default_latitude": record.get("default_latitude"),

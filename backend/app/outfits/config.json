@@ -6,6 +6,16 @@
   "catalog_limit": 40,
   "candidates_per_anchor": 8,
   "max_items_per_outfit": 6,
+  "layering_fit_policy": {
+    "version": "layering-fit-v1",
+    "hard_failure_threshold": -1.5,
+    "penalty_points_per_gap": 8.0,
+    "maximum_penalty_points": 20.0,
+    "hoodie_restrictive_outer_penalty": 1.2,
+    "hoodie_stiff_jacket_penalty": 0.9,
+    "bulky_restrictive_outer_penalty": 0.8,
+    "roomy_outer_bonus": 0.3
+  },
   "request_timeout_seconds": 120,
   "lease_seconds": 3600,
   "max_attempts": 3,

@@ -65,6 +65,17 @@ def test_catalog_changes_version_generation_without_invalidating_visual_reviews(
     assert config.evaluator_key==changed.evaluator_key
 
 
+def test_layering_policy_versions_generation_without_hiding_existing_visual_reviews():
+    config=load_config()
+    changed=config.model_copy(update={
+        'layering_fit_policy':config.layering_fit_policy.model_copy(
+            update={'hard_failure_threshold':-1.6}
+        )
+    })
+    assert config.generation_key!=changed.generation_key
+    assert config.evaluator_key==changed.evaluator_key
+
+
 def test_generation_reads_vectors_while_frontend_item_reads_stay_small(repository,tmp_path):
     from app.outfits.service import OutfitLibrary
     from app.outfits.store import LocalOutfitStore

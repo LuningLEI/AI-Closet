@@ -100,13 +100,11 @@ struct MyView: View {
             }
 
             NavigationLink {
-                ProfileEditorPage(title: appSettings.text("profile.section.style"), saveAction: saveProfile) {
-                    PreferenceEditor(viewModel: viewModel)
-                }
+                PersonalizationSettingsPage(viewModel: viewModel, saveAction: saveProfile)
             } label: {
                 profileRow(
-                    title: appSettings.text("profile.section.style"),
-                    subtitle: stylePreferenceSummary
+                    title: appSettings.text("profile.section.personalization"),
+                    subtitle: appSettings.text("profile.section.personalization.subtitle")
                 )
             }
 
@@ -118,6 +116,15 @@ struct MyView: View {
                 profileRow(
                     title: appSettings.text("profile.section.catalog"),
                     subtitle: appSettings.text("profile.section.catalog.subtitle", viewModel.selectedCategories.count)
+                )
+            }
+
+            NavigationLink {
+                DataPrivacySettingsPage(viewModel: viewModel, saveAction: saveProfile)
+            } label: {
+                profileRow(
+                    title: appSettings.text("profile.section.privacy"),
+                    subtitle: appSettings.text("profile.section.privacy.subtitle")
                 )
             }
 

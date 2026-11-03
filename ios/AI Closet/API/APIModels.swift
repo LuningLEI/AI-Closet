@@ -153,6 +153,11 @@ struct UserPreferencesDTO: Codable {
     let customCategories: [String]
     let taxonomyCustomizations: TaxonomyCustomizationsDTO?
     let modelTrainingConsent: Bool
+    let personalizationEnabled: Bool
+    let feedbackLearningEnabled: Bool
+    let explorationLevel: String
+    let rotationLevel: String
+    let temperatureSensitivity: String
     let defaultLocationLabel: String?
     let defaultLatitude: Double?
     let defaultLongitude: Double?
@@ -175,6 +180,11 @@ struct UserPreferencesUpdateRequestDTO: Encodable {
     let customCategories: [String]?
     let taxonomyCustomizations: TaxonomyCustomizationsDTO?
     let modelTrainingConsent: Bool?
+    let personalizationEnabled: Bool?
+    let feedbackLearningEnabled: Bool?
+    let explorationLevel: String?
+    let rotationLevel: String?
+    let temperatureSensitivity: String?
     let defaultLocationLabel: String?
     let defaultLatitude: Double?
     let defaultLongitude: Double?
@@ -213,6 +223,7 @@ struct RecommendationsRequestDTO: Encodable {
     let preferredStyle: String?
     let preferredColor: String?
     let limit: Int
+    let rotationSeed: String
 }
 
 struct RecommendationsResponseDTO: Codable {

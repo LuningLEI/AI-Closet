@@ -119,6 +119,13 @@ def default_user_preferences() -> dict[str, Any]:
             "custom_categories": [],
             "customizations": {},
         },
+        "recommendation": {
+            "personalization_enabled": True,
+            "feedback_learning_enabled": True,
+            "exploration_level": "balanced",
+            "rotation_level": "balanced",
+            "temperature_sensitivity": "neutral",
+        },
     }
 
 
@@ -133,6 +140,9 @@ def merge_preferences(preferences: dict[str, Any] | None) -> dict[str, Any]:
         merged["profile"].update(profile)
     if isinstance(taxonomy, dict):
         merged["taxonomy"].update(taxonomy)
+    recommendation = preferences.get("recommendation")
+    if isinstance(recommendation, dict):
+        merged["recommendation"].update(recommendation)
     if isinstance(preferences.get("occasion_thresholds"), dict):
         merged["occasion_thresholds"] = dict(preferences["occasion_thresholds"])
     if "onboarding_completed" in preferences:

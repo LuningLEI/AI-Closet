@@ -67,7 +67,7 @@ flowchart TB
 - **Recent wear and long-term taste are separate.** Recent wear controls rotation and availability; the taste profile represents longer-term preferences. A positive taste score cannot bypass the two-day wear exclusion.
 - **Free text is summarized asynchronously.** Submitting feedback makes no model call. At 10 pending notes, a separate worker produces a structured per-user summary in batches of at most 50. The summary excludes shoe, bag and accessory preferences, cannot alter hard rules, and is protected against instructions embedded in user text.
 - **Cross-user learning is off by default.** Per-user learning is isolated. Anonymous global training may use a user’s data only after explicit training consent and is outside the v1 pipeline.
-- **Learning is observable and reversible.** Profile versions and component scores support debugging and evaluation. Users can view or reset the learned profile.
+- **Learning is observable internally and reversible by the user.** Profile versions and component scores support debugging and evaluation. The product does not expose inferred feature weights or a “Learned Taste” page; users can control personalization and reset its history from Data & Privacy.
 
 ## Current defaults
 

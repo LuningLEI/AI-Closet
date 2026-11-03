@@ -22,98 +22,113 @@ struct SystemSettingsPage: View {
                 .pickerStyle(.menu)
             }
 
-            Section("Personalization") {
-                NavigationLink("Learned taste profile") {
-                    LearnedTasteProfilePage()
-                }
-            }
         }
         .navigationTitle(appSettings.text("settings.title"))
         .navigationBarTitleDisplayMode(.inline)
     }
 }
 
-struct LearnedTasteProfilePage: View {
+struct PersonalizationSettingsPage: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appSettings: AppSettings
+    @ObservedObject var viewModel: ProfileViewModel
+    let saveAction: @MainActor () async -> Void
+
+    var body: some View {
+        Form {
+            Section(appSettings.text("personalization.explicit")) {
+                NavigationLink(appSettings.text("personalization.styles")) {
+                    ProfileEditorPage(title: appSettings.text("profile.section.style"), saveAction: saveAction) {
+                        PreferenceEditor(viewModel: viewModel)
+                    }
+                }
+            }
+            Section {
+                Toggle(appSettings.text("personalization.enabled"), isOn: $viewModel.personalizationEnabled)
+                Text(appSettings.text("personalization.enabled.help"))
+                    .font(.footnote).foregroundStyle(.secondary)
+                Toggle(appSettings.text("personalization.learning"), isOn: $viewModel.feedbackLearningEnabled)
+                    .disabled(!viewModel.personalizationEnabled)
+                Text(appSettings.text("personalization.learning.help"))
+                    .font(.footnote).foregroundStyle(.secondary)
+            } header: { Text(appSettings.text("personalization.behavior")) }
+            Section(appSettings.text("personalization.discovery")) {
+                Picker(appSettings.text("personalization.discovery"), selection: $viewModel.explorationLevel) {
+                    Text(appSettings.text("personalization.discovery.familiar")).tag("familiar")
+                    Text(appSettings.text("personalization.discovery.balanced")).tag("balanced")
+                    Text(appSettings.text("personalization.discovery.adventurous")).tag("adventurous")
+                }.pickerStyle(.inline).labelsHidden()
+            }.disabled(!viewModel.personalizationEnabled)
+            Section(appSettings.text("personalization.rotation")) {
+                Picker(appSettings.text("personalization.rotation"), selection: $viewModel.rotationLevel) {
+                    Text(appSettings.text("personalization.rotation.repeat")).tag("repeat_freely")
+                    Text(appSettings.text("personalization.rotation.balanced")).tag("balanced")
+                    Text(appSettings.text("personalization.rotation.variety")).tag("more_variety")
+                }.pickerStyle(.inline).labelsHidden()
+            }
+            Section(appSettings.text("personalization.comfort")) {
+                Picker(appSettings.text("personalization.comfort"), selection: $viewModel.temperatureSensitivity) {
+                    Text(appSettings.text("personalization.comfort.cold")).tag("runs_cold")
+                    Text(appSettings.text("personalization.comfort.neutral")).tag("neutral")
+                    Text(appSettings.text("personalization.comfort.warm")).tag("runs_warm")
+                }.pickerStyle(.inline).labelsHidden()
+            }
+        }
+        .navigationTitle(appSettings.text("profile.section.personalization"))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button(appSettings.text("common.save")) { Task { await saveAction(); dismiss() } }
+            }
+        }
+    }
+}
+
+struct DataPrivacySettingsPage: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var authStore: AuthStore
-    @State private var profile: TasteProfileDTO?
+    @EnvironmentObject private var appSettings: AppSettings
+    @ObservedObject var viewModel: ProfileViewModel
+    let saveAction: @MainActor () async -> Void
     @State private var errorMessage: String?
     @State private var loading = false
     @State private var confirmReset = false
 
     var body: some View {
         Form {
-            if loading && profile == nil {
-                ProgressView("Loading learned preferences…")
-            } else if let profile {
-                Section("Learning status") {
-                    LabeledContent("Evidence", value: "\(profile.evidenceCount)")
-                    LabeledContent("Profile version", value: "\(profile.profileVersion)")
-                    LabeledContent("Exploration", value: "\(Int((profile.explorationRate * 100).rounded()))%")
-                }
-                Section("Learned preferences") {
-                    featureList(profile.preferredFeatures, empty: "More feedback is needed before a preference is learned.")
-                }
-                Section("Learned avoidances") {
-                    featureList(profile.avoidedFeatures, empty: "No repeated avoidances learned yet.")
-                }
-                if let summary = profile.freeTextSummary {
-                    Section("Feedback summary") {
-                        Text(summary.summary)
-                        LabeledContent("Confidence", value: summary.confidence.capitalized)
-                        if !summary.preferredCues.isEmpty {
-                            Text("Prefers: \(summary.preferredCues.joined(separator: ", "))")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        }
-                        if !summary.avoidedCues.isEmpty {
-                            Text("Avoids: \(summary.avoidedCues.joined(separator: ", "))")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                Section("How learning works") {
-                    Text("Inferred preferences fade slowly after \(profile.inferredPreferenceHalfLifeDays) days and keep a \(Int(profile.inferredPreferenceFloor * 100))% floor. Your explicit settings and exact likes do not decay.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                Section {
-                    Button("Reset learned taste", role: .destructive) { confirmReset = true }
-                }
+            Section {
+                Toggle(appSettings.text("privacy.training"), isOn: $viewModel.modelTrainingConsent)
+                Text(appSettings.text("privacy.training.help"))
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            Section {
+                Button(appSettings.text("privacy.reset"), role: .destructive) { confirmReset = true }
+                    .disabled(loading)
+                Text(appSettings.text("privacy.reset.help"))
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
         }
-        .navigationTitle("Learned taste")
+        .navigationTitle(appSettings.text("profile.section.privacy"))
         .navigationBarTitleDisplayMode(.inline)
-        .task { await load() }
-        .refreshable { await load() }
-        .confirmationDialog("Reset learned taste?", isPresented: $confirmReset, titleVisibility: .visible) {
-            Button("Reset", role: .destructive) { Task { await reset() } }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Future feedback will start a new learning period. Your catalog and explicit style settings stay unchanged.")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button(appSettings.text("common.save")) { Task { await saveAction(); dismiss() } }
+            }
         }
-    }
-
-    @ViewBuilder private func featureList(_ values: [String], empty: String) -> some View {
-        if values.isEmpty { Text(empty).foregroundStyle(.secondary) }
-        else { ForEach(values, id: \.self) { Text(readable($0)) } }
-    }
-
-    private func readable(_ value: String) -> String {
-        value.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: ":", with: ": ")
-    }
-
-    @MainActor private func load() async {
-        loading = true; defer { loading = false }
-        do {
-            profile = try await APIClient.shared.get("/api/v1/outfits/taste-profile", token: await authStore.validAccessToken())
-            errorMessage = nil
-        } catch { errorMessage = error.localizedDescription }
+        .confirmationDialog(appSettings.text("privacy.reset.prompt"), isPresented: $confirmReset, titleVisibility: .visible) {
+            Button(appSettings.text("privacy.reset"), role: .destructive) { Task { await reset() } }
+            Button(appSettings.text("common.cancel"), role: .cancel) {}
+        } message: {
+            Text(appSettings.text("privacy.reset.help"))
+        }
     }
 
     @MainActor private func reset() async {
         loading = true; defer { loading = false }
         do {
             try await APIClient.shared.delete("/api/v1/outfits/taste-profile", token: await authStore.validAccessToken())
-            await load()
+            errorMessage = nil
         } catch { errorMessage = error.localizedDescription }
     }
 }

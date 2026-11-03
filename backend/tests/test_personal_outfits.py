@@ -4,7 +4,15 @@ import pytest
 from fastapi import HTTPException
 from test_outfit_library import setup,Signer
 from app.outfits.personal import PersonalOutfits,PersonalOutfitRequest,WearRequest,OutfitFeedbackRequest
-from app.outfits.recommendations import WearPolicy,wear_effect,recommend_library
+from app.outfits.recommendations import (
+    WearPolicy,
+    policy_for_rotation,
+    recommend_library,
+    rotate_near_tied_results,
+    stratified_score_rotation,
+    temperature_eligible_results,
+    wear_effect,
+)
 from app.services.recommendation import RecommendationEngine
 from app.models.domain import ClothingItemRecord, RecommendationContext
 
@@ -81,6 +89,203 @@ def test_decay_boundaries(setup,days,blocked,penalty):
     events=[{'item_ids':[top.id],'worn_at':(now-timedelta(days=days)).isoformat()}]
     b,p=wear_effect([top],events,WearPolicy(),now)
     assert b==blocked and p==pytest.approx(penalty)
+
+
+def test_rotation_levels_map_to_distinct_wear_policies(setup):
+    _,top,_,_,_=setup;now=datetime.now(timezone.utc)
+    event=[{'item_ids':[top.id],'worn_at':(now-timedelta(days=1)).isoformat()}]
+    assert wear_effect([top],event,policy_for_rotation('repeat_freely'),now)==(False,0.0)
+    assert wear_effect([top],event,policy_for_rotation('balanced'),now)[0] is True
+    assert wear_effect([top],event,policy_for_rotation('more_variety'),now)[0] is True
+
+
+def test_page_seed_rotates_only_near_tied_recommendations():
+    class Result:
+        def __init__(self, identifier, score):
+            self.id=identifier
+            self.score=score
+
+    ranked=[Result(f'near-{index}',100-index*.2) for index in range(12)]
+    ranked.append(Result('outside-quality-window',80))
+
+    assert rotate_near_tied_results(ranked,'user',None,5)==ranked
+    first=rotate_near_tied_results(ranked,'user','page-a',5)
+    assert [row.id for row in first]==[
+        row.id for row in rotate_near_tied_results(ranked,'user','page-a',5)
+    ]
+    pages={
+        tuple(row.id for row in rotate_near_tied_results(ranked,'user',f'page-{index}',5)[:5])
+        for index in range(10)
+    }
+    assert len(pages)>1
+    assert all('outside-quality-window' not in page for page in pages)
+
+
+def test_score_band_rotation_returns_four_high_one_middle_and_no_low():
+    class Breakdown:
+        weather_fit=20
+    class Result:
+        def __init__(self, index):
+            self.id=f'outfit-{index}'
+            self.score=100-index
+            self.breakdown=Breakdown()
+            self.missing_slots=[]
+
+    ranked=[Result(index) for index in range(30)]
+    page=stratified_score_rotation(ranked,'user','page-a',5)[:5]
+    indexes=[int(row.id.rsplit('-',1)[1]) for row in page]
+    assert sum(index < 10 for index in indexes)==4
+    assert sum(10 <= index < 20 for index in indexes)==1
+    assert sum(index >= 20 for index in indexes)==0
+    assert [row.score for row in page] == sorted(
+        [row.score for row in page], reverse=True
+    )
+    assert [row.id for row in page]==[
+        row.id for row in stratified_score_rotation(ranked,'user','page-a',5)[:5]
+    ]
+    assert [row.id for row in page] != [
+        row.id for row in stratified_score_rotation(ranked,'user','page-b',5)[:5]
+    ]
+
+
+def test_mild_weather_page_limits_repeated_short_lower_body_silhouettes():
+    class Breakdown:
+        weather_fit=20
+    class Item:
+        def __init__(self, identifier, subtype, length=None):
+            self.id=identifier
+            self.category='Bottoms'
+            self.subtype=subtype
+            self.length=length
+    class Result:
+        def __init__(self, index, subtype):
+            self.id=f'outfit-{index}'
+            self.score=100-index
+            self.breakdown=Breakdown()
+            self.missing_slots=[]
+            self.items=[Item(f'bottom-{index}',subtype)]
+
+    ranked=[
+        Result(index,'Shorts' if index % 2 == 0 else 'Wide-leg Pants')
+        for index in range(30)
+    ]
+    page=stratified_score_rotation(ranked,'user','mild-page',5,70)[:5]
+    assert sum(row.items[0].subtype == 'Shorts' for row in page) <= 2
+    assert len({row.items[0].id for row in page}) == 5
+
+
+def test_temperature_gate_applies_before_score_band_sampling():
+    class Breakdown:
+        def __init__(self, weather_fit):self.weather_fit=weather_fit
+    class Result:
+        def __init__(self, identifier, weather_fit, missing_slots=None, items=None):
+            self.id=identifier
+            self.breakdown=Breakdown(weather_fit)
+            self.missing_slots=missing_slots or []
+            self.items=items or []
+    class Item:
+        def __init__(self, season):self.season=season
+
+    rows=[
+        Result('compatible',18),
+        Result('weather-mismatch',8),
+        Result('cold-without-layer',18,['outerwear']),
+        Result('winter-only',18,items=[Item('Winter')]),
+    ]
+    assert [row.id for row in temperature_eligible_results(rows,60)] == [
+        'compatible','cold-without-layer'
+    ]
+    assert [row.id for row in temperature_eligible_results(rows,85)] == [
+        'compatible','cold-without-layer'
+    ]
+    assert [row.id for row in temperature_eligible_results(rows,40)] == [
+        'compatible','winter-only'
+    ]
+
+
+def test_temperature_gate_uses_celsius_season_and_exposed_clothing_boundaries():
+    class Breakdown:
+        weather_fit=18
+    class Item:
+        def __init__(self, identifier, season, category, subtype, sleeve_length=None):
+            self.id=identifier
+            self.season=season
+            self.category=category
+            self.subtype=subtype
+            self.sleeve_length=sleeve_length
+            self.length=None
+    class Result:
+        def __init__(self, identifier, items):
+            self.id=identifier
+            self.items=items
+            self.breakdown=Breakdown()
+            self.missing_slots=[]
+
+    winter=Result('winter',[Item('winter-pants','Winter','Bottoms','Trousers')])
+    spring=Result('spring',[Item('spring-pants','Spring','Bottoms','Trousers')])
+    summer_pants=Result('summer-pants',[Item('summer-pants','Summer','Bottoms','Trousers')])
+    summer_tee=Result('summer-tee',[Item('tee','Spring, Summer','Tops','T-shirt','Short Sleeve')])
+    summer_shorts=Result('summer-shorts',[Item('shorts','Spring, Summer','Bottoms','Shorts')])
+    layered_tee=Result('layered-tee',[
+        Item('tee-layer','Spring, Summer','Tops','T-shirt','Short Sleeve'),
+        Item('jacket','Spring, Summer','Outerwear','Jacket','Long Sleeve'),
+    ])
+    season_rows=[winter,spring,summer_pants]
+    exposed_rows=[summer_tee,summer_shorts,layered_tee]
+
+    assert [row.id for row in temperature_eligible_results(season_rows,46.4)] == ['winter']
+    assert [row.id for row in temperature_eligible_results(season_rows,53.6)] == ['spring']
+    assert [row.id for row in temperature_eligible_results(season_rows,68)] == ['spring']
+    assert [row.id for row in temperature_eligible_results(exposed_rows,73.4)] == [
+        'layered-tee'
+    ]
+    assert [row.id for row in temperature_eligible_results(season_rows,75.2)] == [
+        'summer-pants'
+    ]
+    assert [row.id for row in temperature_eligible_results(exposed_rows,80.6)] == [
+        'summer-tee','summer-shorts','layered-tee'
+    ]
+
+
+def test_boundary_temperatures_probabilistically_mix_both_sides():
+    class Breakdown:
+        weather_fit=18
+    class Item:
+        def __init__(self, identifier, season, subtype='Trousers', sleeve_length=None):
+            self.id=identifier
+            self.season=season
+            self.category='Tops' if subtype == 'T-shirt' else 'Bottoms'
+            self.subtype=subtype
+            self.sleeve_length=sleeve_length
+            self.length=None
+    class Result:
+        def __init__(self, identifier, item):
+            self.id=identifier
+            self.items=[item]
+            self.breakdown=Breakdown()
+            self.missing_slots=[]
+
+    winter=[Result(f'winter-{i}',Item(f'wi-{i}','Winter')) for i in range(200)]
+    spring=[Result(f'spring-{i}',Item(f'sp-{i}','Spring')) for i in range(200)]
+    at_ten=temperature_eligible_results(winter+spring,50,'ten-celsius')
+    assert 70 <= sum(row.id.startswith('winter-') for row in at_ten) <= 130
+    assert 70 <= sum(row.id.startswith('spring-') for row in at_ten) <= 130
+
+    spring=[Result(f'spring22-{i}',Item(f'sp22-{i}','Spring')) for i in range(200)]
+    summer=[Result(f'summer22-{i}',Item(f'su22-{i}','Summer')) for i in range(200)]
+    at_twenty_two=temperature_eligible_results(spring+summer,71.6,'twenty-two-celsius')
+    assert 70 <= sum(row.id.startswith('spring22-') for row in at_twenty_two) <= 130
+    assert 70 <= sum(row.id.startswith('summer22-') for row in at_twenty_two) <= 130
+
+    exposed=[
+        Result(f'tee25-{i}',Item(f'tee-{i}','Spring, Summer','T-shirt','Short Sleeve'))
+        for i in range(200)
+    ]
+    at_twenty_five=temperature_eligible_results(exposed,77,'twenty-five-celsius')
+    assert 70 <= len(at_twenty_five) <= 130
+    assert [row.id for row in at_twenty_five] == [
+        row.id for row in temperature_eligible_results(exposed,77,'twenty-five-celsius')
+    ]
 
 
 def test_recent_overlap_excludes_other_outfit_without_fallback(setup,monkeypatch):

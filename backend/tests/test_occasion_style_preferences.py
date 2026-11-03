@@ -1,5 +1,10 @@
 from app.services.preference_schema import normalize_preference_record, normalize_preference_updates
 from app.services.taxonomy import preferred_styles_for_occasion
+from app.services.personalization_settings import (
+    effective_temperature_f,
+    exploration_rate,
+    resolve_personalization_settings,
+)
 
 
 def test_legacy_flat_styles_are_expanded_to_each_selected_occasion():
@@ -46,3 +51,37 @@ def test_recommendation_resolves_only_the_requested_occasions_styles():
 
     assert preferred_styles_for_occasion(preferences, "travel") == ["Sporty", "Streetwear"]
     assert preferred_styles_for_occasion(preferences, "Work") == ["Classic", "Sporty"]
+
+
+def test_personalization_controls_round_trip_through_preferences_json():
+    result = normalize_preference_updates("user-1", None, {
+        "personalization_enabled": False,
+        "feedback_learning_enabled": False,
+        "exploration_level": "adventurous",
+        "rotation_level": "more_variety",
+        "temperature_sensitivity": "runs_cold",
+    })
+
+    assert result["personalization_enabled"] is False
+    assert result["feedback_learning_enabled"] is False
+    assert result["preferences"]["recommendation"] == {
+        "personalization_enabled": False,
+        "feedback_learning_enabled": False,
+        "exploration_level": "adventurous",
+        "rotation_level": "more_variety",
+        "temperature_sensitivity": "runs_cold",
+    }
+
+
+def test_user_facing_levels_map_to_server_owned_numeric_policy():
+    familiar = resolve_personalization_settings({"recommendation": {"exploration_level": "familiar"}})
+    balanced = resolve_personalization_settings(None)
+    adventurous = resolve_personalization_settings({"recommendation": {"exploration_level": "adventurous"}})
+
+    assert [exploration_rate(value) for value in (familiar, balanced, adventurous)] == [0.0, 0.15, 0.30]
+    assert effective_temperature_f(62, resolve_personalization_settings({
+        "recommendation": {"temperature_sensitivity": "runs_cold"}
+    })) == 57
+    assert effective_temperature_f(62, resolve_personalization_settings({
+        "recommendation": {"temperature_sensitivity": "runs_warm"}
+    })) == 67

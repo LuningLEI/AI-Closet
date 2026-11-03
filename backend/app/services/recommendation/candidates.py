@@ -14,6 +14,7 @@ from app.models.domain import ClothingItemRecord, RecommendationContext
 from app.services.recommendation.models import Candidate
 from app.services.recommendation.rules import item_occasion_tokens, recommendation_slot, tights_layering_valid
 from app.services.taxonomy import merge_preferences, preferred_styles_for_occasion, user_categories
+from app.services.layering_fit import assess_layering_pair
 
 
 class CandidateGenerator:
@@ -72,13 +73,13 @@ class CandidateGenerator:
         full_body_items = grouped.get("FullBody", [])[:RECOMMENDATION_PRIMARY_SLOT_LIMIT]
 
         shoe_options = [None] + grouped.get("Shoes", [])[:RECOMMENDATION_OPTIONAL_SLOT_LIMIT]
-        outerwear_options = [None] + grouped.get("Outerwear", [])[:RECOMMENDATION_OPTIONAL_SLOT_LIMIT]
         accessory_options = [None] + grouped.get("Accessories", [])[:RECOMMENDATION_OPTIONAL_SLOT_LIMIT]
 
         seen: set[str] = set()
         results: list[Candidate] = []
 
         for full_body in full_body_items:
+            outerwear_options = self._outerwear_options([full_body], grouped.get("Outerwear", []))
             for shoes in shoe_options:
                 for outerwear in outerwear_options:
                     for accessory in accessory_options:
@@ -92,6 +93,7 @@ class CandidateGenerator:
 
         for top in tops:
             for bottom in bottoms:
+                outerwear_options = self._outerwear_options([top], grouped.get("Outerwear", []))
                 for shoes in shoe_options:
                     for outerwear in outerwear_options:
                         for accessory in accessory_options:
@@ -131,6 +133,21 @@ class CandidateGenerator:
                 return results
         return results
 
+    def _outerwear_options(
+        self,
+        inners: list[ClothingItemRecord],
+        outerwear: list[ClothingItemRecord],
+    ) -> list[ClothingItemRecord | None]:
+        ranked = []
+        for position, outer in enumerate(outerwear):
+            assessments = [assess_layering_pair(inner, outer) for inner in inners]
+            if assessments and any(assessment.hard_failure for assessment in assessments):
+                continue
+            score = min((assessment.score for assessment in assessments), default=0.0)
+            ranked.append((score, position, outer))
+        ranked.sort(key=lambda entry: (-entry[0], entry[1], entry[2].id))
+        return [None] + [entry[2] for entry in ranked[:RECOMMENDATION_OPTIONAL_SLOT_LIMIT]]
+
     def _shortlist_items(
         self,
         items: list[ClothingItemRecord],
@@ -147,8 +164,10 @@ class CandidateGenerator:
             ),
         )
         limit = (
-            RECOMMENDATION_OPTIONAL_SHORTLIST_LIMIT
-            if slot in {"Shoes", "Outerwear", "Accessories"}
+            RECOMMENDATION_PRIMARY_SLOT_LIMIT
+            if slot == "Outerwear"
+            else RECOMMENDATION_OPTIONAL_SHORTLIST_LIMIT
+            if slot in {"Shoes", "Accessories"}
             else RECOMMENDATION_PRIMARY_SHORTLIST_LIMIT
         )
         return shortlisted[:limit]

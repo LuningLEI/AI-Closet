@@ -9,11 +9,18 @@ from app.outfits.service import revision
 PROFILE={'layering_region':None,'lower_layer_role':None,'can_wear_alone':True,'can_layer_over':True,'can_layer_under':True,'requires_inner_layer':False,
          'closure_type':'buttons','wearing_modes':['standalone','inner_layer','outer_layer_open'],
          'evidence':'Opaque shirt with a visible button front.'}
+PROFILE_WITH_CAPACITY = PROFILE | {
+    'layering_bulk': None,
+    'outer_capacity': None,
+    'material_stiffness': None,
+    'hood_volume': None,
+    'sleeve_volume': None,
+}
 
 def test_recognition_parses_wearing_profile_and_legacy_is_unknown():
     service=ClothingRecognitionService()
     analysis=service._normalize_model_payload({'category':'Tops','color':'White','wearing_profile':PROFILE},raw_response={})
-    assert analysis.wearing_profile.model_dump()==PROFILE
+    assert analysis.wearing_profile.model_dump()==PROFILE_WITH_CAPACITY
     assert service._normalize_model_payload({'category':'Tops'},raw_response={}).wearing_profile.can_wear_alone is None
 
 @pytest.mark.parametrize('value',[
@@ -54,4 +61,27 @@ def test_pipeline_persists_profile_in_item_and_machine_record(repository):
     RecognitionPipeline(repository,Model(),Embed(),Storage()).process_job(job)
     assert repository.get_item(item.id,'u').wearing_profile==PROFILE
     records=json.loads(repository.recognition_records_path.read_text())
-    assert records[-1]['normalized_payload']['wearing_profile']==PROFILE
+    assert records[-1]['normalized_payload']['wearing_profile']==PROFILE_WITH_CAPACITY
+
+
+def test_unknown_capacity_fields_do_not_invalidate_legacy_outfit_revisions():
+    from app.outfits.service import revision
+
+    base = dict(
+        user_id='u', image_url='https://example.test/i.jpg', category='Tops',
+        recognition_tags={'wearing_profile': PROFILE},
+    )
+    legacy = ClothingItemRecord(**base)
+    explicit_unknown = ClothingItemRecord(**{
+        **base,
+        'recognition_tags': {'wearing_profile': PROFILE_WITH_CAPACITY},
+    })
+    recognized_capacity = ClothingItemRecord(**{
+        **base,
+        'recognition_tags': {'wearing_profile': PROFILE | {'layering_bulk': 'high'}},
+    })
+
+    assert legacy.wearing_profile == PROFILE
+    assert explicit_unknown.wearing_profile == PROFILE
+    assert revision(explicit_unknown) == revision(legacy)
+    assert revision(recognized_capacity) != revision(legacy)

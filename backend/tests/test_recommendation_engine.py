@@ -3,6 +3,8 @@ from __future__ import annotations
 from app.models.domain import ClothingItemRecord, RecommendationContext
 from app.services.recommendation import RecommendationEngine
 from app.services.recommendation.candidates import CandidateGenerator
+from app.services.recommendation.models import Candidate
+from app.services.recommendation.scorer import CandidateScorer
 
 
 class StaticEmbeddingService:
@@ -192,3 +194,21 @@ def test_recommendation_engine_penalizes_competing_colors() -> None:
     assert recommendations
     top_colors = {item.color for item in recommendations[0].items}
     assert not {"Red", "Green"}.issubset(top_colors)
+
+
+def test_prevalidated_library_outfit_survives_contextual_score_cutoff(monkeypatch) -> None:
+    scorer = CandidateScorer(StaticEmbeddingService())
+    candidate = Candidate(
+        top=closet_item("party-top", "Tops", "Sequin Top", occasion="Party", season="Summer"),
+        bottom=closet_item("party-skirt", "Bottoms", "Skirt", occasion="Party", season="Summer"),
+        shoes=closet_item("sandals", "Shoes", "Sandals", occasion="Party", season="Summer"),
+    )
+    context = RecommendationContext(occasion="Work", temperature_f=30, preferred_style="Business")
+    monkeypatch.setattr("app.services.recommendation.scorer.MIN_RECOMMENDATION_SCORE", 10_000)
+
+    assert scorer.score(candidate, context, None) is None
+    saved = scorer.score(candidate, context, None, prevalidated_library_outfit=True)
+
+    assert saved is not None
+    assert saved.breakdown.occasion_fit < 25
+    assert saved.breakdown.weather_fit < 20

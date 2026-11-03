@@ -9,6 +9,7 @@ from app.outfits.diagnostics import OutfitValidationError
 from app.outfits.models import BatchAccessorySelections, BatchVisualReviews, VisualReview
 from app.outfits.store import now
 from app.services.taste_profile import taste_review_key
+from app.services.layering_fit import assess_outfit_layering
 
 
 def shoe_pool_revision(items, include_accessories=False):
@@ -80,11 +81,15 @@ def _prepared_candidates(anchor, catalog, proposals, config, stats):
         rejection_codes = structural_rejection_codes(clothing)
         compatibility = compatibility_issues(clothing, config.compatibility_rules)
         if compatibility: rejection_codes.append('compatibility_rule')
+        layering = assess_outfit_layering(clothing, config.layering_fit_policy)
+        if layering and layering.hard_failure:
+            rejection_codes.append('physical_layering_capacity_conflict')
         if rejection_codes:
             stats['invalid'] += 1
             diagnostic = {'candidate_index': candidate_index, 'item_ids': ids,
                 'status': 'rejected_before_accessories', 'rejection_codes': rejection_codes}
             if compatibility: diagnostic['compatibility_issues'] = compatibility
+            if layering and layering.hard_failure: diagnostic['layering_reasons'] = list(layering.reasons)
             stats['candidate_diagnostics'].append(diagnostic); continue
         stats['candidate_diagnostics'].append({'candidate_index': candidate_index, 'item_ids': ids,
             'status': 'passed_clothing_rules', 'rejection_codes': []})

@@ -23,6 +23,11 @@ final class ProfileViewModel: ObservableObject {
     @Published var catalogLengths: [String] = []
     @Published var catalogSleeveLengths: [String] = []
     @Published var modelTrainingConsent = false
+    @Published var personalizationEnabled = true
+    @Published var feedbackLearningEnabled = true
+    @Published var explorationLevel = "balanced"
+    @Published var rotationLevel = "balanced"
+    @Published var temperatureSensitivity = "neutral"
     @Published var isLoading = false
     @Published var errorMessage: String?
 
@@ -69,6 +74,11 @@ final class ProfileViewModel: ObservableObject {
                     occasions:catalogOccasions,seasons:catalogSeasons,lengths:catalogLengths,
                     sleeveLengths:catalogSleeveLengths),
                 modelTrainingConsent: modelTrainingConsent,
+                personalizationEnabled: personalizationEnabled,
+                feedbackLearningEnabled: feedbackLearningEnabled,
+                explorationLevel: explorationLevel,
+                rotationLevel: rotationLevel,
+                temperatureSensitivity: temperatureSensitivity,
                 defaultLocationLabel: preferences?.defaultLocationLabel,
                 defaultLatitude: preferences?.defaultLatitude,
                 defaultLongitude: preferences?.defaultLongitude,
@@ -117,6 +127,11 @@ final class ProfileViewModel: ObservableObject {
             catalogSleeveLengths=custom.sleeveLengths ?? catalogSleeveLengths
         }
         modelTrainingConsent = response.modelTrainingConsent
+        personalizationEnabled = response.personalizationEnabled
+        feedbackLearningEnabled = response.feedbackLearningEnabled
+        explorationLevel = response.explorationLevel
+        rotationLevel = response.rotationLevel
+        temperatureSensitivity = response.temperatureSensitivity
     }
 
     private func apply(_ taxonomy:TaxonomyDTO) {
