@@ -1,4 +1,5 @@
 PYTHON ?= /opt/anaconda3/bin/python
+OUTFIT_CONFIG_PATH ?= app/outfits/config.qwen.json
 
 .PHONY: backend-dev worker outfit-worker taste-profile-worker free-text-taste-worker \
 	backend-check backend-lint backend-typecheck backend-test migrations-check \
@@ -7,7 +8,7 @@ PYTHON ?= /opt/anaconda3/bin/python
 	taste-parameter-search export-openapi api-contract check clean
 
 backend-dev:
-	cd backend && $(PYTHON) -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+	cd backend && OUTFIT_CONFIG_PATH="$(OUTFIT_CONFIG_PATH)" $(PYTHON) -m uvicorn app.main:app --host 127.0.0.1 --port 8001
 
 worker:
 	cd backend && $(PYTHON) -m workers.recognition
@@ -44,7 +45,7 @@ api-contract: export-openapi
 check: backend-check backend-lint backend-typecheck backend-test migrations-check docs-check
 
 outfit-worker:
-	cd backend && $(PYTHON) -m workers.outfits
+	cd backend && OUTFIT_CONFIG_PATH="$(OUTFIT_CONFIG_PATH)" $(PYTHON) -m workers.outfits
 
 taste-profile-worker:
 	cd backend && $(PYTHON) -m workers.taste_profiles

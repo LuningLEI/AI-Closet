@@ -26,6 +26,7 @@ backend/baseline_runs/
 backend/comparison_runs/
 backend/evaluation_templates/
 closet_picture/
+.local_models/
 
 
 ios/artifacts/

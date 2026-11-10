@@ -17,6 +17,7 @@ from app.core.versions import HEURISTIC_FALLBACK_MODEL_VERSION, ITEM_FEATURE_VER
 from app.models.domain import ClothingItemRecord, ItemFeatureSnapshot, RecognitionJobRecord, RecognitionRecord
 from app.services.embedding_service import EmbeddingService, item_embedding_text
 from app.services.recognition_service import ClothingRecognitionService
+from app.services.recognition_output import RecognitionOutputError
 from app.services.storage_service import StorageService
 from app.services.occasion_thresholds import resolve_thresholds
 from app.services.occasion_support import select_scored_occasions, is_manual, occasion_overrides, effective_occasion
@@ -49,6 +50,9 @@ class RecognitionPipeline:
                 allowed_categories=user_categories(preferences),
                 user_profile=preferences.get("profile", {}),
                 allowed_taxonomy=taxonomy,
+                # Production retries are durable job attempts. Each attempt sends
+                # the image at most once; schema/semantic failures use text-only repair.
+                max_visual_calls=1,
             )
             if analysis.source == RecognitionSource.HEURISTIC_FALLBACK:
                 raise RuntimeError('Vision recognition did not succeed')
@@ -150,7 +154,7 @@ class RecognitionPipeline:
                 user_id=job.user_id,
                 clothing_item_id=job.clothing_item_id,
                 provider=analysis.source,
-                model_name=settings.openai_vision_model if analysis.source == RecognitionSource.OPENAI_VISION else HEURISTIC_FALLBACK_MODEL_VERSION,
+                model_name=settings.recognition_model if analysis.source == RecognitionSource.OPENAI_VISION else HEURISTIC_FALLBACK_MODEL_VERSION,
                 prompt_version=TAXONOMY_PROMPT_VERSION,
                 analysis_version=analysis.analysis_version,
                 taxonomy_version=analysis.taxonomy_version,
@@ -222,6 +226,11 @@ class RecognitionPipeline:
             )
         except Exception as error:
             details = {**error_details(error), 'phase':'recognition'}
+            if isinstance(error, RecognitionOutputError) and getattr(error, 'issues', None):
+                details['validation_issues'] = error.issues[:20]
+            terminal = (
+                isinstance(error, RecognitionOutputError) and not error.retry_requires_vision
+            ) or job.attempts >= settings.recognition_worker_max_attempts
             safe_error = json.dumps(details, sort_keys=True)
             log_event(
                 "recognition_job.failed",
@@ -231,16 +240,20 @@ class RecognitionPipeline:
                 attempts=job.attempts,
                 error=safe_error,
             )
-            self.repository.fail_recognition_job(job.id, safe_error, max_attempts=settings.recognition_worker_max_attempts)
+            self.repository.fail_recognition_job(
+                job.id,
+                safe_error,
+                max_attempts=job.attempts if terminal else settings.recognition_worker_max_attempts,
+            )
             current = self.repository.get_item(job.clothing_item_id, job.user_id)
             if current is not None and current.image_path == job.image_path and not (current.metadata or {}).get('label_confirmation'):
                 self.repository.update_item_if_current(
                     current,
                     {
-                        "recognition_status": RecognitionStatus.FAILED if job.attempts >= settings.recognition_worker_max_attempts else RecognitionStatus.QUEUED,
-                        "recognition_source": RecognitionSource.FAILED if job.attempts >= settings.recognition_worker_max_attempts else RecognitionSource.ANALYZING,
+                        "recognition_status": RecognitionStatus.FAILED if terminal else RecognitionStatus.QUEUED,
+                        "recognition_source": RecognitionSource.FAILED if terminal else RecognitionSource.ANALYZING,
                         "recognition_summary": current.recognition_summary if is_manual(current) else "Recognition failed after upload.",
-                        "metadata": {**(current.metadata or {}), "pipeline": PIPELINE_NAME, "recognition_status": RecognitionStatus.FAILED if job.attempts >= settings.recognition_worker_max_attempts else RecognitionStatus.QUEUED, "recognition_error": details},
+                        "metadata": {**(current.metadata or {}), "pipeline": PIPELINE_NAME, "recognition_status": RecognitionStatus.FAILED if terminal else RecognitionStatus.QUEUED, "recognition_error": details},
                     },
                 )
 

@@ -31,6 +31,7 @@ def reset_user_recognition(
     dry_run: bool = False,
     include_manual: bool = False,
     limit: int | None = None,
+    statuses: set[str] | None = None,
     backup_dir: Path | None = None,
 ) -> dict:
     if not user_id.strip():
@@ -47,7 +48,9 @@ def reset_user_recognition(
         manual = (item.recognition_status == RecognitionStatus.MANUAL
                   or item.recognition_source == RecognitionSource.MANUAL_EDIT
                   or (item.metadata or {}).get("manual_override"))
-        if manual and not include_manual:
+        if statuses is not None and item.recognition_status not in statuses:
+            skipped['status'] += 1
+        elif manual and not include_manual:
             skipped['manual'] += 1
         elif not item.image_path and not item.image_url.startswith('https://'):
             skipped['missing_image_reference'] += 1
@@ -95,10 +98,14 @@ def reset_user_recognition(
                     Path(urlsplit(item.image_path or item.image_url).path).name or 'stored-image.jpg')
         fresh = ClothingItemRecord(user_id=user_id, image_url=item.image_url, category=DEFAULT_CATEGORY).model_dump()
         updates = {key: fresh[key] for key in RESET_FIELDS}
+        metadata = {
+            key: value for key, value in (item.metadata or {}).items()
+            if key != 'label_confirmation'
+        }
         updates.update(recognition_status=RecognitionStatus.QUEUED,
                        recognition_source=RecognitionSource.ANALYZING,
                        recognition_summary='Queued for recognition with the current model settings.',
-                       metadata={**(item.metadata or {}), 'pipeline': PIPELINE_NAME,
+                       metadata={**metadata, 'pipeline': PIPELINE_NAME,
                                  'recognition_status': RecognitionStatus.QUEUED,
                                  'manual_override': False, 'occasion_overrides': {'added': [], 'removed': []},
                                  'recognition_reset_id': run_id})
@@ -146,12 +153,19 @@ def main(argv: list[str] | None = None) -> int:
                       help='Reset all items, including manually corrected clothing attributes.')
     parser.set_defaults(include_manual=False)
     parser.add_argument('--limit', type=int, help='Reset only this many eligible items, oldest first.')
+    parser.add_argument(
+        '--status', action='append', dest='statuses',
+        choices=(RecognitionStatus.QUEUED, RecognitionStatus.FAILED,
+                 RecognitionStatus.COMPLETE, RecognitionStatus.MANUAL),
+        help='Only reset items currently in this status; may be repeated.',
+    )
     args = parser.parse_args(argv)
     if args.limit is not None and args.limit < 1:
         parser.error('--limit must be positive')
     try:
         report = reset_user_recognition(build_closet_repository(), str(args.user_id),
-                                        dry_run=args.dry_run, include_manual=args.include_manual, limit=args.limit)
+                                        dry_run=args.dry_run, include_manual=args.include_manual, limit=args.limit,
+                                        statuses=set(args.statuses) if args.statuses else None)
     except Exception as error:
         # Do not print backend exception payloads, keys, or signed image URLs.
         message = str(error) if isinstance(error, (ValueError, RuntimeError)) else type(error).__name__

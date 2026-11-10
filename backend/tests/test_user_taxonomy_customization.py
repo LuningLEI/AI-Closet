@@ -47,3 +47,12 @@ def test_invalid_and_oversized_custom_values_are_sanitized():
         'customizations':{'colors':['Unknown','',123,'x'*61,'Blue','Blue'],'ignored':['x']}
     }})
     assert user_taxonomy(preferences)['colors']==['Unknown','Blue']
+
+
+def test_removed_default_subtype_cannot_be_restored_by_stale_customization():
+    preferences = merge_preferences({'taxonomy': {
+        'selected_categories': ['Bottoms'],
+        'customizations': {'subtypes': {'Bottoms': ['Unknown', 'Joggers', 'Trousers']}},
+    }})
+
+    assert user_taxonomy(preferences)['subtypes']['Bottoms'] == ['Unknown', 'Trousers']

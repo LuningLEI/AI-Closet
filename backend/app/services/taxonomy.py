@@ -80,7 +80,6 @@ SUBTYPES = {
         "Wide-leg Pants",
         "Straight-leg Pants",
         "Trousers",
-        "Joggers",
         "Shorts",
         "Pencil Skirt",
         "Mini Skirt",
@@ -99,6 +98,8 @@ SUBTYPES = {
     "Intimates": ["Unknown", "Tights", "Bra", "Underwear", "Loungewear", "Pajamas", "Slip"],
     DEFAULT_CATEGORY: ["Unknown"],
 }
+
+DEPRECATED_SUBTYPES = {"Bottoms": frozenset({"Joggers"})}
 
 
 def default_user_preferences() -> dict[str, Any]:
@@ -207,6 +208,12 @@ def normalize_customizations(value:Any,categories:list[str]|None=None)->dict[str
         allowed=set(categories or CATEGORIES);subtypes={}
         for category,options in list(value['subtypes'].items())[:100]:
             if category in allowed:
+                if isinstance(options, list):
+                    options = [
+                        option for option in options
+                        if not isinstance(option, str)
+                        or option.strip() not in DEPRECATED_SUBTYPES.get(category, frozenset())
+                    ]
                 subtypes[category]=_clean_options(options,['Unknown'],keep_unknown=True)
         result['subtypes']=subtypes
     return result
@@ -334,7 +341,6 @@ def normalize_subtype(category: str, subtype: str | None) -> str | None:
             "jean": "Jeans",
             "trouser": "Trousers",
             "pant": "Trousers",
-            "jogger": "Joggers",
             "short": "Shorts",
             "mini skirt": "Mini Skirt",
             "midi skirt": "Midi Skirt",

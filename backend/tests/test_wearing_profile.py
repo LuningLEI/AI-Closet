@@ -46,6 +46,84 @@ def test_manual_label_edit_preserves_profile_and_profile_affects_revision(reposi
     # Derived accessor is not serialized into a nonexistent SQL column.
     assert 'wearing_profile' not in restored.model_dump()
 
+
+def test_taxonomy_change_replaces_stale_layering_profile(repository):
+    cardigan = repository.add_item(ClothingItemRecord(
+        user_id='u', image_url='https://example.test/cardigan.jpg',
+        category='Outerwear', subtype='Cardigan', color='Green', season='Fall',
+        style='Casual', occasion='Everyday',
+        recognition_tags={'wearing_profile': {
+            'layering_region': 'upper_body', 'can_wear_alone': False,
+            'can_layer_over': True, 'can_layer_under': False,
+            'requires_inner_layer': True, 'wearing_modes': ['outer_layer_closed'],
+        }},
+    ))
+    class Embed:
+        def create_embedding(self, text):
+            assert 'can_wear_alone=True' in text
+            assert 'requires_inner_layer=False' in text
+            return [.25]
+
+    saved = ItemService(repository, Embed()).update_item('u', cardigan.id, ClothingItemUpdateRequest(
+        category='Tops', subtype='Sweater', color='Green', season='Fall',
+        style='Casual', occasion='Everyday',
+    ))
+
+    assert saved.wearing_profile['can_wear_alone'] is True
+    assert saved.wearing_profile['requires_inner_layer'] is False
+    assert saved.wearing_profile['can_layer_over'] is None
+    assert saved.wearing_profile['can_layer_under'] is None
+    assert saved.wearing_profile['wearing_modes'] == ['standalone']
+
+
+def test_user_layering_override_wins_and_is_versioned(repository):
+    item = repository.add_item(ClothingItemRecord(
+        user_id='u', image_url='https://example.test/sweater.jpg',
+        category='Tops', subtype='Sweater', color='Gray', season='Winter',
+        style='Casual', occasion='Everyday', recognition_tags={'wearing_profile': PROFILE},
+    ))
+    before_revision = revision(item)
+    class Embed:
+        def create_embedding(self, text):
+            assert 'can_layer_over=False' in text
+            return [.75]
+
+    saved = ItemService(repository, Embed()).update_item('u', item.id, ClothingItemUpdateRequest(
+        category='Tops', subtype='Sweater', color='Gray', season='Winter',
+        style='Casual', occasion='Everyday', wearing_profile_override=True,
+        wearing_profile={
+            'can_wear_alone': True,
+            'can_layer_over': False,
+            'can_layer_under': True,
+            'requires_inner_layer': False,
+        },
+    ))
+
+    assert saved.wearing_profile['can_layer_over'] is False
+    assert saved.wearing_profile['wearing_modes'] == ['standalone', 'inner_layer']
+    assert saved.wearing_profile['evidence'] == 'User-confirmed layering capabilities.'
+    assert revision(saved) != before_revision
+
+
+def test_partial_layering_override_keeps_new_taxonomy_defaults(repository):
+    cardigan = repository.add_item(ClothingItemRecord(
+        user_id='u', image_url='https://example.test/cardigan-2.jpg',
+        category='Outerwear', subtype='Cardigan', color='Gray', season='Winter',
+        style='Casual', occasion='Everyday', recognition_tags={'wearing_profile': PROFILE},
+    ))
+    class Embed:
+        def create_embedding(self, _): return [.1]
+
+    saved = ItemService(repository, Embed()).update_item('u', cardigan.id, ClothingItemUpdateRequest(
+        category='Tops', subtype='Sweater', color='Gray', season='Winter',
+        style='Casual', occasion='Everyday', wearing_profile_override=True,
+        wearing_profile={'can_layer_over': False},
+    ))
+
+    assert saved.wearing_profile['can_wear_alone'] is True
+    assert saved.wearing_profile['requires_inner_layer'] is False
+    assert saved.wearing_profile['can_layer_over'] is False
+
 def test_pipeline_persists_profile_in_item_and_machine_record(repository):
     import json
     from app.models.domain import ClothingAnalysis, RecognitionJobRecord

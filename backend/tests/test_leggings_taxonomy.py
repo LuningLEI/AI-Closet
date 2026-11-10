@@ -21,5 +21,6 @@ def test_yoga_pants_use_activewear_without_reclassifying_ordinary_trousers():
         assert normalize_subtype(category, label) == 'Yoga Pants'
     assert recommendation_slot('Activewear', 'Yoga Pants') == 'Bottoms'
     assert constrain_category('Bottoms', 'Wide-leg Pants') == 'Bottoms'
-    assert constrain_category('Bottoms', 'Joggers') == 'Bottoms'
+    assert 'Joggers' not in SUBTYPES['Bottoms']
+    assert normalize_subtype('Bottoms', 'Joggers') is None
     assert constrain_category('Bottoms', 'Yoga Pants', ['Bottoms', 'Tops']) == 'Bottoms'

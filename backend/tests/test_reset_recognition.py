@@ -90,6 +90,26 @@ def test_dry_run_manual_opt_in_limit_and_repeat_do_not_duplicate_jobs(repository
         assert len(repository.list_recognition_jobs('owner')) == 3
 
 
+def test_targeted_status_reset_clears_label_confirmation(repository, tmp_path):
+    queued = add_item(
+        repository, 'queued', recognition_status='queued',
+        metadata={'label_confirmation': {'labels': {'category': 'Dresses'}}, 'keep': True},
+    )
+    complete = add_item(repository, 'complete', recognition_status='complete')
+
+    report = reset_user_recognition(
+        repository, 'owner', include_manual=True, statuses={'queued'},
+        backup_dir=tmp_path/'backups',
+    )
+
+    assert report['queued_item_ids'] == [queued.id]
+    assert report['skipped'] == {'status': 1}
+    updated = repository.get_item(queued.id, 'owner')
+    assert 'label_confirmation' not in updated.metadata
+    assert updated.metadata['keep'] is True
+    assert repository.get_item(complete.id, 'owner') == complete
+
+
 def test_processing_job_blocks_all_mutations(repository, tmp_path):
     item = add_item(repository)
     add_job(repository, item, 'processing')

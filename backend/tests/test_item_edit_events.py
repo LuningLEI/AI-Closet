@@ -72,6 +72,55 @@ def test_attribute_updates_record_only_changed_card_fields(repository) -> None:
     assert events[0]["changes"] == {"color": {"before": "White", "after": "Blue"}}
 
 
+def test_manual_save_rebases_over_metadata_only_concurrent_write(repository) -> None:
+    user_id = "00000000-0000-4000-8000-0000000000a2"
+    item = repository.add_item(
+        ClothingItemRecord(
+            id="metadata-race",
+            user_id=user_id,
+            image_url="https://example.test/item.jpg",
+            image_path=f"{user_id}/item.jpg",
+            category="Tops",
+            subtype="T-shirt",
+            color="White",
+            season="Summer",
+            style="Casual",
+            occasion="Everyday",
+            metadata={"pipeline": "recognition"},
+        )
+    )
+    original_commit = repository.commit_item_change
+    calls = 0
+
+    def conflict_once(expected, updates, recognition=None, event=None, feature=None, job=None):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            repository.update_item(
+                item.id,
+                {"metadata": {**(expected.metadata or {}), "background_marker": "preserved"}},
+                user_id,
+            )
+            return None
+        return original_commit(
+            expected, updates, recognition=recognition, event=event, feature=feature, job=job,
+        )
+
+    repository.commit_item_change = conflict_once
+    saved = ItemService(repository, StubEmbeddingService()).update_item(
+        user_id,
+        item.id,
+        ClothingItemUpdateRequest(
+            category="Tops", subtype="T-shirt", color="Blue", season="Summer",
+            style="Casual", occasion="Everyday", edit_source="ios",
+        ),
+    )
+
+    assert saved.color == "Blue"
+    assert saved.metadata["background_marker"] == "preserved"
+    assert calls == 2
+
+
 def test_image_replacement_records_final_editor_transform(repository) -> None:
     user_id = "00000000-0000-4000-8000-0000000000a1"
     repository.add_item(
@@ -185,6 +234,24 @@ def test_stale_user_selection_is_rejected_before_writes(repository,monkeypatch):
     assert failure.value.status_code==409
     assert repository.get_item(item.id)==item
     assert not repository.item_edit_events_path.exists()
+
+
+def test_uncategorized_manual_save_ignores_stale_placeholder_occasion(repository):
+    item = repository.add_item(ClothingItemRecord(
+        id='uncategorized', user_id='owner', image_url='https://example.test/unknown.jpg',
+        category='Uncategorized', subtype='Unknown', color='Multicolor', season='Summer',
+        style='Casual', occasion='Party', recognition_source='OpenAI Vision',
+    ))
+    saved = ItemService(repository,StubEmbeddingService()).update_item(
+        'owner', item.id,
+        ClothingItemUpdateRequest(
+            category='Tops', subtype='T-shirt', color='Multicolor', season='Summer',
+            style='Casual', occasion='Everyday', occasion_before='Workout', edit_source='ios',
+        ),
+    )
+    assert saved.category == 'Tops'
+    assert saved.subtype == 'T-shirt'
+    assert saved.occasion == 'Everyday'
 
 
 def test_reset_modes_preserve_or_clear_active_overrides(repository, tmp_path,monkeypatch):

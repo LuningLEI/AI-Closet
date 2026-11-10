@@ -60,12 +60,19 @@ class OutfitConfig(BaseModel):
     # Execution-only caps. Archived run snapshots omit these fields and therefore
     # automatically receive the safer/cost-bounded defaults when resumed.
     vision_accessory_limit: int = Field(default=4, ge=0, le=8)
+    composite_visual_inputs: bool = False
+    visual_batch_size: int = Field(default=2, ge=1, le=2)
+    composite_max_dimension: int = Field(default=1024, ge=448, le=2048)
+    per_optional_item_review: bool = False
     accessory_selection_prompt: str = 'prompts/select_accessories.txt'
     accessory_selection_text: str = ''
     footwear_catalog_limit: int = Field(default=8, ge=1, le=30)
     vision_footwear_limit: int = Field(default=4, ge=1, le=8)
     footwear_selection_model: str = 'gpt-4.1-mini'
     clothing_prompt: str = 'prompts/generate_clothing.txt'
+    clothing_input_mode: Literal['images', 'metadata-only'] = 'images'
+    catalog_policy: Literal['legacy', 'bottom-purpose-balanced-v1'] = 'legacy'
+    clothing_policy_version: str = 'legacy'
     footwear_selection_prompt: str = 'prompts/select_footwear.txt'
     clothing_text: str = ''
     footwear_selection_text: str = ''
@@ -101,8 +108,11 @@ class OutfitConfig(BaseModel):
                        'vector-catalog-v4-thermal-standalone-outerwear', self.require_shoes, self.catalog_rules.model_dump(),
                        self.layering_fit_policy.model_dump(),
                        self.footwear_pipeline,self.clothing_text,self.footwear_catalog_limit,
-                       self.footwear_selection_model,self.footwear_selection_text]
-        base += ['accessories-v1', self.accessory_catalog_limit, self.accessory_selection_text]
+                       self.footwear_selection_model,self.footwear_selection_text,
+                       self.clothing_input_mode,self.catalog_policy,self.clothing_policy_version]
+        base += ['accessories-v1', self.accessory_catalog_limit, self.accessory_selection_text,
+                 self.composite_visual_inputs,self.visual_batch_size,self.composite_max_dimension,
+                 self.per_optional_item_review]
         return digest(base)
 
     def snapshot(self):

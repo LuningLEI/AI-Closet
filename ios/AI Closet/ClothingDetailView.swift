@@ -17,6 +17,8 @@ struct ClothingDetailView: View {
     @State private var selectedSeasons: Set<String>
     @State private var selectedColors: Set<String>
     @State private var selectedOccasions: Set<String>
+    @State private var editableWearingProfile: WearingProfileDTO
+    @State private var wearingProfileEdited = false
     @State private var showingDeleteConfirmation = false
     @State private var showingImageEditor = false
     @State private var isSaving = false
@@ -54,6 +56,7 @@ struct ClothingDetailView: View {
         _selectedSeasons = State(initialValue: SeasonSelectionSupport.decode(item.season,options:Array(Set(taxonomy.seasons+savedSeasons))))
         _selectedColors = State(initialValue: ColorSelectionSupport.decode(item.color))
         _selectedOccasions = State(initialValue: OccasionSelectionSupport.decode(item.occasion, options:Array(Set(taxonomy.occasions+savedOccasions))))
+        _editableWearingProfile = State(initialValue: item.recognitionTags?.wearingProfile ?? WearingProfileDTO())
         self.viewModel = viewModel
         self.taxonomy = taxonomy
         self.tokenProvider = tokenProvider
@@ -97,10 +100,16 @@ struct ClothingDetailView: View {
                         Picker("Category", selection: $editableItem.category) {
                             ForEach(uniqueOptions(taxonomy.categories+[editableItem.category]), id: \.self) { Text($0).tag($0) }
                         }
+                        .onChange(of: editableItem.category) { _, _ in
+                            syncLayeringForTaxonomySelection()
+                        }
 
                         Picker("Subtype", selection: Binding(
                             get: { editableItem.subtype ?? "Unknown" },
-                            set: { editableItem.subtype = $0 == "Unknown" ? nil : $0 }
+                            set: {
+                                editableItem.subtype = $0 == "Unknown" ? nil : $0
+                                syncLayeringForTaxonomySelection()
+                            }
                         )) {
                             ForEach(subtypeOptions, id: \.self) {
                                 Text($0).tag($0)
@@ -163,6 +172,17 @@ struct ClothingDetailView: View {
                         )
                     }
 
+                    Section("Layering") {
+                        Text("Confirm how this specific item can be worn. These choices affect outfit generation.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+
+                        layeringPicker("Can be worn alone", field: .canWearAlone)
+                        layeringPicker("Can fit a layer underneath", field: .canLayerOver)
+                        layeringPicker("Can fit under another garment", field: .canLayerUnder)
+                        layeringPicker("Requires an inner layer", field: .requiresInnerLayer)
+                    }
+
                     if let error = viewModel.errorMessage {
                         Text(error).foregroundStyle(.red)
                     }
@@ -220,7 +240,9 @@ struct ClothingDetailView: View {
                                 itemToSave, token: await tokenProvider(),
                                 occasionBefore: editableItem.occasion,
                                 occasionThresholdAtEdit: editableItem.recognitionTags?.displayOccasionThreshold,
-                                occasionThresholdsAtEdit: editableItem.recognitionTags?.displayOccasionThresholds
+                                occasionThresholdsAtEdit: editableItem.recognitionTags?.displayOccasionThresholds,
+                                wearingProfile: wearingProfileEdited ? editableWearingProfile : nil,
+                                wearingProfileOverride: wearingProfileEdited
                             )
                             isSaving = false
                             if saved { dismiss() }
@@ -325,12 +347,109 @@ struct ClothingDetailView: View {
         return options.filter { seen.insert($0).inserted }
     }
 
+    @ViewBuilder
+    private func layeringPicker(_ title: String, field: LayeringCapabilityField) -> some View {
+        Picker(title, selection: layeringBinding(field)) {
+            ForEach(LayeringCapabilityChoice.allCases) { choice in
+                Text(choice.title).tag(choice)
+            }
+        }
+    }
+
+    private func layeringBinding(_ field: LayeringCapabilityField) -> Binding<LayeringCapabilityChoice> {
+        Binding(
+            get: { LayeringCapabilityChoice(value: layeringValue(field)) },
+            set: { choice in
+                setLayeringValue(choice.value, field: field)
+                wearingProfileEdited = true
+            }
+        )
+    }
+
+    private func layeringValue(_ field: LayeringCapabilityField) -> Bool? {
+        switch field {
+        case .canWearAlone: return editableWearingProfile.canWearAlone
+        case .canLayerOver: return editableWearingProfile.canLayerOver
+        case .canLayerUnder: return editableWearingProfile.canLayerUnder
+        case .requiresInnerLayer: return editableWearingProfile.requiresInnerLayer
+        }
+    }
+
+    private func setLayeringValue(_ value: Bool?, field: LayeringCapabilityField) {
+        switch field {
+        case .canWearAlone:
+            editableWearingProfile.canWearAlone = value
+            if value == true { editableWearingProfile.requiresInnerLayer = false }
+        case .canLayerOver:
+            editableWearingProfile.canLayerOver = value
+            if value == false && editableWearingProfile.requiresInnerLayer == true {
+                editableWearingProfile.requiresInnerLayer = false
+            }
+        case .canLayerUnder:
+            editableWearingProfile.canLayerUnder = value
+        case .requiresInnerLayer:
+            editableWearingProfile.requiresInnerLayer = value
+            if value == true {
+                editableWearingProfile.canWearAlone = false
+                editableWearingProfile.canLayerOver = true
+            }
+        }
+    }
+
+    private func syncLayeringForTaxonomySelection() {
+        if editableItem.category == openingItem.category && editableItem.subtype == openingItem.subtype {
+            editableWearingProfile = openingItem.recognitionTags?.wearingProfile ?? WearingProfileDTO()
+        } else {
+            // The server derives safe defaults from the new taxonomy. Showing
+            // Unknown here avoids presenting stale model claims as user choices.
+            editableWearingProfile = WearingProfileDTO()
+        }
+        wearingProfileEdited = false
+    }
+
     private static func isAlreadyDeletedMessage(_ message: String) -> Bool {
         message.localizedCaseInsensitiveContains("not found")
     }
 
     private static func ownedDataCopy(_ data: Data) -> Data {
         data.withUnsafeBytes { Data($0) }
+    }
+}
+
+private enum LayeringCapabilityField {
+    case canWearAlone
+    case canLayerOver
+    case canLayerUnder
+    case requiresInnerLayer
+}
+
+private enum LayeringCapabilityChoice: String, CaseIterable, Identifiable {
+    case unknown
+    case yes
+    case no
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .unknown: return "Unknown"
+        case .yes: return "Yes"
+        case .no: return "No"
+        }
+    }
+    var value: Bool? {
+        switch self {
+        case .unknown: return nil
+        case .yes: return true
+        case .no: return false
+        }
+    }
+
+    init(value: Bool?) {
+        switch value {
+        case true: self = .yes
+        case false: self = .no
+        case nil: self = .unknown
+        }
     }
 }
 

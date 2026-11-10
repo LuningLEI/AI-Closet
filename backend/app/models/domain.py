@@ -40,9 +40,12 @@ class ColorTone(BaseModel):
     @field_validator('color')
     @classmethod
     def known_color(cls, value):
-        from app.services.taxonomy import COLORS
-        if value not in COLORS: raise ValueError('Color tone must use a canonical color tag')
-        return value
+        # The canonical palette is user-configurable. Provider output is checked
+        # against that user's runtime taxonomy before this persistence model is
+        # built, so the domain model must not reject valid custom labels.
+        if not isinstance(value, str) or not value.strip() or len(value.strip()) > 60:
+            raise ValueError('Color tone must use a non-empty taxonomy color tag')
+        return value.strip()
 
 
 class WearingProfile(BaseModel):
@@ -112,6 +115,7 @@ class ClothingAnalysis(BaseModel):
     formality_score: int | None = None
     confidence: float | None = None
     summary: str | None = None
+    warnings: list[str] = Field(default_factory=list)
     source: str = RecognitionSource.HEURISTIC_FALLBACK
     raw_category: str | None = None
     raw_subtype: str | None = None
@@ -119,6 +123,7 @@ class ClothingAnalysis(BaseModel):
     raw_style: str | None = None
     raw_occasion: str | None = None
     raw_seasons: list[str] = Field(default_factory=list)
+    output_repair: dict[str, Any] | None = None
 
     @field_validator('seasons', mode='before')
     @classmethod

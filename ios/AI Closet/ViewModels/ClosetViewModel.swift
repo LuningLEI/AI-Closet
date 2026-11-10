@@ -167,7 +167,7 @@ final class ClosetViewModel: ObservableObject {
         }
     }
 
-    func update(_ item: ClothingItemDTO, token: String?, editSource: String = "ios", occasionBefore: String? = nil, occasionThresholdAtEdit: Double? = nil, occasionThresholdsAtEdit: [String: Double]? = nil) async -> Bool {
+    func update(_ item: ClothingItemDTO, token: String?, editSource: String = "ios", occasionBefore: String? = nil, occasionThresholdAtEdit: Double? = nil, occasionThresholdsAtEdit: [String: Double]? = nil, wearingProfile: WearingProfileDTO? = nil, wearingProfileOverride: Bool = false) async -> Bool {
         errorMessage = nil
         do {
             let request = ClothingItemUpdateRequestDTO(
@@ -182,6 +182,8 @@ final class ClosetViewModel: ObservableObject {
                 material: item.material ?? "",
                 length: item.length ?? "",
                 sleeveLength: item.sleeveLength ?? "",
+                wearingProfile: wearingProfile,
+                wearingProfileOverride: wearingProfileOverride,
                 occasionBefore: occasionBefore,
                 occasionThresholdAtEdit: occasionThresholdAtEdit,
                 occasionThresholdsAtEdit: occasionThresholdsAtEdit

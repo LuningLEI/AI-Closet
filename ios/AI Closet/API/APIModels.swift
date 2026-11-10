@@ -57,8 +57,28 @@ struct OccasionScoreDTO: Codable, Equatable {
 struct OccasionRecognitionDTO: Codable, Equatable {
     let occasionScores: [OccasionScoreDTO]?
     let occasionThreshold: Double?
+    let wearingProfile: WearingProfileDTO?
     var displayOccasionThreshold: Double? = nil
     var displayOccasionThresholds: [String: Double]? = nil
+}
+
+struct WearingProfileDTO: Codable, Equatable {
+    var canWearAlone: Bool?
+    var canLayerOver: Bool?
+    var canLayerUnder: Bool?
+    var requiresInnerLayer: Bool?
+
+    init(
+        canWearAlone: Bool? = nil,
+        canLayerOver: Bool? = nil,
+        canLayerUnder: Bool? = nil,
+        requiresInnerLayer: Bool? = nil
+    ) {
+        self.canWearAlone = canWearAlone
+        self.canLayerOver = canLayerOver
+        self.canLayerUnder = canLayerUnder
+        self.requiresInnerLayer = requiresInnerLayer
+    }
 }
 
 struct ClosetSummaryDTO: Codable {
@@ -101,6 +121,8 @@ struct ClothingItemUpdateRequestDTO: Encodable {
     var material: String? = nil
     var length: String? = nil
     var sleeveLength: String? = nil
+    var wearingProfile: WearingProfileDTO? = nil
+    var wearingProfileOverride: Bool = false
     var occasionBefore: String? = nil
     var occasionThresholdAtEdit: Double? = nil
     var occasionThresholdsAtEdit: [String: Double]? = nil

@@ -111,6 +111,22 @@ class BatchVisualReview(BaseModel):
     review: CurrentVisualReview
 
 
+class OptionalItemDecision(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    item_id: str
+    verdict: Literal['clear_improvement', 'no_improvement', 'uncertain']
+    reason: str
+
+
+class DetailedBatchVisualReview(BatchVisualReview):
+    optional_item_reviews: list[OptionalItemDecision]
+
+
 class BatchVisualReviews(BaseModel):
     model_config = ConfigDict(extra='forbid')
     reviews: list[BatchVisualReview]
+
+
+class DetailedBatchVisualReviews(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    reviews: list[DetailedBatchVisualReview]

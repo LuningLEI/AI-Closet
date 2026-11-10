@@ -12,7 +12,7 @@ make taste-profile-worker PYTHON=python
 make free-text-taste-worker PYTHON=python
 ```
 
-The API is at `http://127.0.0.1:8000`; OpenAPI is at `/docs`. Configure the iOS development base URL in the app settings.
+The AI Closet API defaults to `http://127.0.0.1:8001` for local iOS development so it can coexist with other services on port 8000; OpenAPI is at `/docs`. Override the iOS URL with the `BACKEND_BASE_URL` Info.plist setting when needed.
 
 ```bash
 make check PYTHON=python

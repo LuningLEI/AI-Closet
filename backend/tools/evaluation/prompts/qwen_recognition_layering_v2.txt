@@ -1,0 +1,20 @@
+QWEN FINAL CONSISTENCY PASS — apply these rules immediately before returning JSON:
+
+1. Interpret direction from the CURRENT garment's perspective and on the SAME body region:
+   - can_layer_under=true means the current garment can fit INSIDE another garment. Only then may wearing_modes contain "inner_layer".
+   - can_layer_over=true means the current garment can fit OUTSIDE another garment. Only then may wearing_modes contain "outer_layer_closed" or "outer_layer_open".
+   - can_wear_alone=true means the current garment covers its body region by itself. Only then may wearing_modes contain "standalone".
+
+2. Derive wearing_modes from the final capability booleans. Never emit a mode whose corresponding capability is false or null. If requires_inner_layer=true, standalone is forbidden. A pullover can never use outer_layer_open.
+
+3. Every wearing_profile must explicitly include requires_inner_layer with true, false, or null. Do not omit it.
+
+4. Shoes, bags, hats, sunglasses, scarves, jewelry, and other accessories do not participate in same-region garment layering. For them return layering_region=null, lower_layer_role=null, all four capability fields=null, all bulk/capacity/hood/sleeve fields=null, wearing_modes=[], and an appropriate scalar layering_role such as "Footwear" or "Accessory".
+
+5. Tights worn under a skirt, dress, or shorts use can_wear_alone=false, can_layer_under=true, can_layer_over=false, lower_layer_role="base", and wearing_modes=["inner_layer"]. Close-fitting leggings that can sit under a skirt or shorts likewise require can_layer_under=true; do not set can_layer_over=true merely because they are visible.
+
+6. A coat that fits over a top uses can_layer_over=true and an outer-layer mode. Do not add inner_layer unless the coat itself can realistically fit inside a larger garment. A camisole that fits under another top or jacket uses can_layer_under=true and inner_layer.
+
+7. layering_role is a scalar string or null. Never copy the wearing_profile object into layering_role.
+
+Final audit checklist: all required keys are present; category/subtype are in the supplied taxonomy; every wearing mode is licensed by its matching true capability; accessories have null capabilities and no wearing modes; the prose evidence agrees with the booleans. Silently correct contradictions before emitting the single JSON object.

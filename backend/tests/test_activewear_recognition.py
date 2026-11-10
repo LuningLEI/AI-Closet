@@ -24,7 +24,7 @@ def test_conflicting_category_preserves_explicit_athletic_type(category, subtype
 
 @pytest.mark.parametrize('category,subtype', [
     ('Tops', 'T-shirt'), ('Tops', 'Tank Top'), ('Tops', 'Hoodie'),
-    ('Bottoms', 'Wide-leg Pants'), ('Bottoms', 'Joggers'),
+    ('Bottoms', 'Wide-leg Pants'), ('Bottoms', 'Trousers'),
 ])
 def test_generic_silhouettes_are_not_forced_into_activewear(category, subtype):
     assert constrain_category(category, subtype) == category

@@ -13,11 +13,15 @@ PHASES = {'generation', 'evaluation', 'clothing_generation', 'footwear_selection
 
 
 class OutfitModelError(RuntimeError):
-    def __init__(self, status, code=None, request_id=None):
+    def __init__(self, status, code=None, request_id=None, provider_message=None):
         super().__init__('Outfit model HTTP request failed')
         self.http_status = status
         self.provider_code = code if code in CODES else 'unknown'
         self.request_id = request_id if isinstance(request_id, str) and re.fullmatch(r'req_[a-zA-Z0-9_-]{1,100}', request_id) else None
+        # Retained for explicitly redacted shadow-evaluation diagnostics only.
+        # error_details() intentionally does not expose provider text in
+        # production job records.
+        self.provider_message = provider_message[:500] if isinstance(provider_message, str) else None
 
 
 class OutfitValidationError(ValueError):

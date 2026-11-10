@@ -2,14 +2,23 @@
 from collections import defaultdict
 from uuid import NAMESPACE_URL, uuid5
 
-from app.outfits.catalog import rank_score, select_catalog
-from app.outfits.compatibility import core_items, compatibility_issues, slot
+from app.outfits.catalog import exclusion_reason, rank_score, select_catalog
+from app.outfits.compatibility import athletic, core_items, compatibility_issues, optional_layer_ids, slot
 from app.outfits.config import digest
 from app.outfits.diagnostics import OutfitValidationError
-from app.outfits.models import BatchAccessorySelections, BatchVisualReviews, VisualReview
+from app.outfits.models import (
+    BatchAccessorySelections, BatchVisualReviews, DetailedBatchVisualReviews, VisualReview,
+)
 from app.outfits.store import now
 from app.services.taste_profile import taste_review_key
 from app.services.layering_fit import assess_outfit_layering
+from app.services.taste_profile import item_taste_score
+
+
+BOTTOM_TOP_TARGET = 12
+BOTTOM_TOP_MAXIMUM = 15
+BOTTOM_OUTERWEAR_MAXIMUM = 8
+NEUTRAL_COLORS = frozenset({'black','white','gray','grey','beige','brown','cream','silver','gold'})
 
 
 def shoe_pool_revision(items, include_accessories=False):
@@ -22,6 +31,8 @@ def clothing_catalog(anchor, items, config, taste_profile=None):
     if config.accessory_pipeline:
         garments = [i for i in garments if slot(i) != 'Accessories' or i.subtype == 'Tights']
     if slot(anchor) != 'Shoes' and not (config.accessory_pipeline and slot(anchor) == 'Accessories' and anchor.subtype != 'Tights'):
+        if config.catalog_policy == 'bottom-purpose-balanced-v1' and slot(anchor) == 'Bottoms':
+            return _bottom_purpose_balanced_catalog(anchor, garments, config, taste_profile)
         return select_catalog(anchor, garments, config.model_copy(update={'require_shoes': False}),taste_profile)
     groups = defaultdict(list)
     for item in sorted(garments, key=lambda i: i.id): groups[slot(item)].append(item)
@@ -30,6 +41,39 @@ def clothing_catalog(anchor, items, config, taste_profile=None):
         for role in ['Tops', 'Bottoms', 'FullBody', 'Outerwear', 'Accessories']:
             if groups[role] and len(selected) < config.catalog_limit: selected.append(groups[role].pop(0))
     return selected
+
+
+def _bottom_purpose_balanced_catalog(anchor, garments, config, taste_profile=None):
+    """The production form of the frozen 30-item Qwen candidate experiment."""
+    ranked = [
+        item for item in garments
+        if item.id != anchor.id and not exclusion_reason(anchor, item, config)
+    ]
+    ranked.sort(key=lambda item: (
+        -(rank_score(anchor, item, config) + 0.08 * item_taste_score(item, taste_profile)),
+        digest([anchor.id, item.id]),
+    ))
+    tops = [item for item in ranked if slot(item) == 'Tops']
+    outerwear = [item for item in ranked if slot(item) == 'Outerwear']
+    active_anchor = athletic(anchor)
+    if active_anchor:
+        tops = [item for item in tops if athletic(item)] + [item for item in tops if not athletic(item)]
+        outerwear = ([item for item in outerwear if athletic(item)]
+                     + [item for item in outerwear if not athletic(item)])
+    active_top_count = sum(athletic(item) for item in tops) if active_anchor else 0
+    top_limit = min(BOTTOM_TOP_MAXIMUM, max(BOTTOM_TOP_TARGET, active_top_count))
+    selected = [anchor, *tops[:top_limit], *outerwear[:BOTTOM_OUTERWEAR_MAXIMUM]]
+    selected_ids = {item.id for item in selected}
+    remaining = defaultdict(list)
+    for item in ranked:
+        role = slot(item)
+        if item.id not in selected_ids and role not in {'Tops', 'Outerwear'}:
+            remaining[role].append(item)
+    while len(selected) < config.catalog_limit and any(remaining.values()):
+        for role in sorted(remaining):
+            if remaining[role] and len(selected) < config.catalog_limit:
+                selected.append(remaining[role].pop(0))
+    return selected[:config.catalog_limit]
 
 
 def footwear_catalog(clothing, items, config, anchor=None):
@@ -53,9 +97,13 @@ def footwear_catalog(clothing, items, config, anchor=None):
     return chosen
 
 
-def admitted_evidence(payload, pool_revision):
+def admitted_evidence(payload, _pool_revision=None):
+    """Validate the selected shoe, not the mutable global add-on inventory.
+
+    Pool revisions remain in evidence for auditability, but adding or editing an
+    unrelated shoe/accessory must not invalidate every saved outfit.
+    """
     evidence = payload.get('footwear') or {}
-    if evidence.get('shoe_pool_revision') != pool_revision: return False
     if evidence.get('pipeline') in {'accessories_full_review_v1', 'accessories_batched_full_review_v2'}:
         selected = evidence.get('selection', {}).get('selected_shoe_id')
         return bool(selected and selected in payload.get('item_ids', []) and payload.get('visual_review'))
@@ -84,6 +132,10 @@ def _prepared_candidates(anchor, catalog, proposals, config, stats):
         layering = assess_outfit_layering(clothing, config.layering_fit_policy)
         if layering and layering.hard_failure:
             rejection_codes.append('physical_layering_capacity_conflict')
+        if any(item.subtype == 'Ski Pants' for item in clothing):
+            upper = [item for item in clothing if slot(item) in {'Tops','Outerwear'}]
+            if not any((item.warmth_level or 0) >= 3 for item in upper):
+                rejection_codes.append('ski_pants_without_warm_upper_coverage')
         if rejection_codes:
             stats['invalid'] += 1
             diagnostic = {'candidate_index': candidate_index, 'item_ids': ids,
@@ -103,12 +155,33 @@ def _prepared_candidates(anchor, catalog, proposals, config, stats):
 def _accessories_for(clothing, anchor, items, config):
     ids = {c.id for c in clothing}
     accessories = [i for i in items if slot(i) == 'Accessories' and i.subtype != 'Tights' and i.id not in ids]
-    accessories.sort(key=lambda a: (-sum(rank_score(c, a, config) for c in clothing), a.id))
     limit = min(config.accessory_catalog_limit, getattr(config, 'vision_accessory_limit', config.accessory_catalog_limit))
-    accessories = accessories[:limit]
-    if slot(anchor) == 'Accessories' and anchor.subtype != 'Tights' and anchor.id not in {a.id for a in accessories} and limit:
-        accessories = accessories[:limit - 1] + [anchor]
-    return accessories
+    scores = {item.id:sum(rank_score(piece,item,config) for piece in clothing) for item in accessories}
+    palette=[]
+    for piece in clothing:
+        for color in [value.strip().lower() for value in (piece.color or '').split(',')]:
+            if color and color not in {'unknown','none'}|NEUTRAL_COLORS and color not in palette:
+                palette.append(color)
+    selected=[]
+    for color in palette[:2]:
+        matching=[item for item in accessories if color in {
+            value.strip().lower() for value in (item.color or '').split(',')
+        }]
+        if matching:
+            scarves=[item for item in matching if (item.subtype or '').lower()=='scarf']
+            best=max(scarves or matching,key=lambda item:(scores[item.id],item.id))
+            if best not in selected:selected.append(best)
+    groups=defaultdict(list)
+    for item in sorted([item for item in accessories if item not in selected],
+                       key=lambda item:(-scores[item.id],item.id)):
+        from app.outfits.compatibility import accessory_role
+        groups[accessory_role(item)].append(item)
+    while len(selected)<limit and any(groups.values()):
+        for role in sorted(groups):
+            if groups[role] and len(selected)<limit:selected.append(groups[role].pop(0))
+    if slot(anchor) == 'Accessories' and anchor.subtype != 'Tights' and anchor.id not in {a.id for a in selected} and limit:
+        selected = selected[:limit - 1] + [anchor]
+    return selected[:limit]
 
 
 def _process_accessory_batch(library, job, run, anchor, all_items, prepared, pool_revision, generation_call, stats, provider):
@@ -125,17 +198,26 @@ def _process_accessory_batch(library, job, run, anchor, all_items, prepared, poo
     if not selectable:
         store.finish(job, 'complete', stats); return
 
-    batch, _, selection_call = library.checked_call(store, job, run, 'generation', config.footwear_selection_model,
-        lambda: provider.select_accessories_batch([(e['candidate_index'], e['clothing'], e['shoes'], e['accessories']) for e in selectable]),
-        phase='accessory_selection')
-    if not isinstance(batch, BatchAccessorySelections): raise OutfitValidationError('invalid_accessory_selection')
-    expected = {e['candidate_index'] for e in selectable}
-    selections, duplicate_selections = {}, set()
-    for selection in batch.selections:
-        if selection.candidate_index in selections:
-            duplicate_selections.add(selection.candidate_index)
-        elif selection.candidate_index in expected:
-            selections[selection.candidate_index] = selection
+    selections, duplicate_selections, selection_calls = {}, set(), {}
+    batch_size = config.visual_batch_size if config.composite_visual_inputs else len(selectable)
+    for start in range(0, len(selectable), batch_size):
+        chunk = selectable[start:start + batch_size]
+        batch, _, selection_call = library.checked_call(
+            store, job, run, 'generation', config.footwear_selection_model,
+            lambda chunk=chunk: provider.select_accessories_batch([
+                (e['candidate_index'], e['clothing'], e['shoes'], e['accessories']) for e in chunk
+            ]), phase='accessory_selection')
+        if not isinstance(batch, BatchAccessorySelections):
+            raise OutfitValidationError('invalid_accessory_selection')
+        chunk_expected = {entry['candidate_index'] for entry in chunk}
+        if [selection.candidate_index for selection in batch.selections] != [entry['candidate_index'] for entry in chunk]:
+            raise OutfitValidationError('invalid_accessory_selection_order')
+        for selection in batch.selections:
+            if selection.candidate_index in selections:
+                duplicate_selections.add(selection.candidate_index)
+            elif selection.candidate_index in chunk_expected:
+                selections[selection.candidate_index] = selection
+                selection_calls[selection.candidate_index] = selection_call
 
     cache, pending, accepted = {r['id']: r for r in store.evaluations(uid)}, [], []
     for entry in selectable:
@@ -158,7 +240,8 @@ def _process_accessory_batch(library, job, run, anchor, all_items, prepared, poo
             continue
         evidence = {'pipeline': 'accessories_batched_full_review_v2', 'shoe_pool_revision': pool_revision,
             'candidate_ids': [s.id for s in shoes], 'accessory_candidate_ids': [a.id for a in accessories],
-            'selection': selection.model_dump(exclude={'candidate_index'}), 'selection_call_id': selection_call}
+            'selection': selection.model_dump(exclude={'candidate_index'}),
+            'selection_call_id': selection_calls.get(entry['candidate_index'])}
         reject = {'clothing_ids': entry['ids'], **evidence}
         if selection.selected_shoe_id is None:
             stats['footwear_rejections'].append({**reject, 'reason': 'no_suitable_shoes'}); continue
@@ -179,23 +262,40 @@ def _process_accessory_batch(library, job, run, anchor, all_items, prepared, poo
             stats['cached'] += 1; accepted.append(data)
         else: pending.append(data)
 
-    evaluation_call = None
+    evaluation_calls = {}
     if pending:
-        reviews, _, evaluation_call = library.checked_call(store, job, run, 'evaluation', config.evaluation_model,
-            lambda: provider.evaluate_batch([(e['candidate_index'], e['members']) for e in pending]),
-            phase='full_outfit_review')
-        if not isinstance(reviews, BatchVisualReviews): raise OutfitValidationError('invalid_full_review')
-        expected = {e['candidate_index'] for e in pending}
-        by_index, duplicate_reviews = {}, set()
-        for result in reviews.reviews:
-            if result.candidate_index in by_index:
-                duplicate_reviews.add(result.candidate_index)
-            elif result.candidate_index in expected:
-                by_index[result.candidate_index] = result.review
+        by_index, optional_by_index, duplicate_reviews = {}, {}, set()
+        batch_size = config.visual_batch_size if config.composite_visual_inputs else len(pending)
+        for start in range(0, len(pending), batch_size):
+            chunk = pending[start:start + batch_size]
+            reviews, _, evaluation_call = library.checked_call(
+                store, job, run, 'evaluation', config.evaluation_model,
+                lambda chunk=chunk: provider.evaluate_batch([
+                    (e['candidate_index'], e['members']) for e in chunk
+                ]), phase='full_outfit_review')
+            if not isinstance(reviews, (BatchVisualReviews, DetailedBatchVisualReviews)):
+                raise OutfitValidationError('invalid_full_review')
+            if [result.candidate_index for result in reviews.reviews] != [entry['candidate_index'] for entry in chunk]:
+                raise OutfitValidationError('invalid_full_review_order')
+            chunk_expected = {entry['candidate_index'] for entry in chunk}
+            for result in reviews.reviews:
+                if result.candidate_index in by_index:
+                    duplicate_reviews.add(result.candidate_index)
+                elif result.candidate_index in chunk_expected:
+                    by_index[result.candidate_index] = result.review
+                    decisions = getattr(result, 'optional_item_reviews', [])
+                    expected_optional = optional_layer_ids(
+                        next(e['members'] for e in chunk if e['candidate_index'] == result.candidate_index),
+                        require_shoes=True,
+                    )
+                    if config.per_optional_item_review and [decision.item_id for decision in decisions] != expected_optional:
+                        raise OutfitValidationError('invalid_optional_review_order')
+                    optional_by_index[result.candidate_index] = [decision.model_dump() for decision in decisions]
+                    evaluation_calls[result.candidate_index] = evaluation_call
         latest = library.items(uid)
         member_map = {i.id: i for entry in pending for i in entry['members']}
-        if shoe_pool_revision(latest.values(), True) != pool_revision or any(
-                i.id not in latest or revision(i) != revision(latest[i.id]) for i in member_map.values()):
+        if any(i.id not in latest or revision(i) != revision(latest[i.id])
+               for i in member_map.values()):
             raise OutfitValidationError('garment_snapshot_changed')
         for entry in pending:
             if entry['candidate_index'] not in by_index or entry['candidate_index'] in duplicate_reviews:
@@ -204,7 +304,10 @@ def _process_accessory_batch(library, job, run, anchor, all_items, prepared, poo
                     'item_ids': entry['ids'], 'status': 'rejected_final_review',
                     'rejection_codes': ['missing_or_duplicate_batch_result']})
                 continue
-            entry.update(evaluation=by_index[entry['candidate_index']], saved=False); accepted.append(entry)
+            entry.update(evaluation=by_index[entry['candidate_index']],
+                         optional_item_reviews=optional_by_index.get(entry['candidate_index'], []),
+                         evaluation_call_id=evaluation_calls.get(entry['candidate_index']),
+                         saved=False); accepted.append(entry)
 
     for entry in accepted:
         evaluation = entry['evaluation']
@@ -216,7 +319,9 @@ def _process_accessory_batch(library, job, run, anchor, all_items, prepared, poo
                 'visual_review': evaluation.model_dump(), 'footwear': entry['evidence'], 'run_id': run['id'],
                 'generation_key': config.generation_key,
                 'policy_version': 3, 'generation_reason': entry['proposal'].reason,
-                'generation_call_id': generation_call, 'evaluation_call_id': evaluation_call,
+                'generation_call_id': generation_call,
+                'evaluation_call_id': entry.get('evaluation_call_id'),
+                'optional_item_reviews': entry.get('optional_item_reviews', []),
                 'anchor_item_id': anchor.id, 'evaluated_at': now()}}
             if hasattr(store, 'save_checked'):
                 if not store.save_checked(record, job, members):
@@ -243,7 +348,15 @@ def process(library, job, run, anchor, items, provider, stats):
     prepared = _prepared_candidates(anchor, catalog, proposals, config, stats)
     taste_context = generation_taste_context(anchor, catalog, getattr(library, 'taste_profile', None),
                                              config.candidates_per_anchor)
-    if not exploration_quota_met([entry['proposal'] for entry in prepared], taste_context):
-        raise OutfitValidationError('taste_exploration_quota_not_met')
+    # Exploration is a ranking/exposure target over time, not a validity rule for
+    # one paid generation batch.  A model can return the requested novel items and
+    # still miss the exact quota after structural filtering.  Rejecting the whole
+    # batch here caused deterministic retries with identical inputs and wasted the
+    # provider budget.  Preserve the observation for audit while allowing valid
+    # candidates to continue through accessory selection and visual review.
+    stats['exploration_quota_met'] = exploration_quota_met(
+        [entry['proposal'] for entry in prepared], taste_context)
+    if not stats['exploration_quota_met']:
+        stats['exploration_quota_warning'] = 'batch_quota_missed_after_structural_filtering'
     return _process_accessory_batch(library, job, run, anchor, list(items.values()), prepared,
                                     pool_revision, generation_call, stats, provider)

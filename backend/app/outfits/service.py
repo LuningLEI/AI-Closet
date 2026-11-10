@@ -61,9 +61,9 @@ def structural_rejection_codes(items, require_shoes=False):
         if roles['Bottoms']>1:codes.append('full_body_with_multiple_bottoms')
         return codes
     tops=[i for i in items if recommendation_slot(i.category, i.subtype)=='Tops']
+    from app.services.outerwear_policy import outerwear_can_replace_top
     standalone_outerwear=[i for i in items if recommendation_slot(i.category,i.subtype)=='Outerwear'
-        and i.wearing_profile['can_wear_alone'] is True
-        and i.wearing_profile['requires_inner_layer'] is not True]
+        and outerwear_can_replace_top(i)]
     if roles['Bottoms']<1:codes.append('missing_bottom')
     if roles['Bottoms']>2:codes.append('too_many_bottom_layers')
     if not tops and not standalone_outerwear:codes.append('missing_top')
@@ -77,7 +77,7 @@ def structurally_valid(items, require_shoes=False):
     return not structural_rejection_codes(items, require_shoes=require_shoes)
 
 class SupersededOutfitJob(Exception):
-    """The anchor or accessory pool changed before a paid model call."""
+    """The anchor changed before a paid model call."""
 
 
 class OutfitLibrary:
@@ -89,29 +89,29 @@ class OutfitLibrary:
         read = getattr(self.repository, 'list_items_for_outfit_candidates', self.repository.list_items_for_outfits) if include_vectors else self.repository.list_items_for_outfits
         return {i.id:i for i in read(uid) if i.user_id==uid and ready(i)}
 
-    def job_data(self, uid, item, footwear_revision=None):
+    def job_data(self, uid, item):
         rev=revision(item)
         identity=[uid,item.id,rev,self.config.generation_key]
-        if self.config.footwear_pipeline:
-            from app.outfits.footwear import shoe_pool_revision
-            identity.append(footwear_revision or shoe_pool_revision(self.items(uid).values(), self.config.accessory_pipeline))
         return {'id':digest(identity),'user_id':uid,
                 'anchor_item_id':item.id,'revision':rev,'generation_key':self.config.generation_key}
+
+    @staticmethod
+    def _logical_job_key(job):
+        """Deduplicate old pool-scoped jobs against the new anchor-scoped identity."""
+        return (job['anchor_item_id'], job['revision'], job['generation_key'])
 
     def sync(self, uid, anchor_id=None):
         items=self.items(uid)
         if anchor_id is not None and anchor_id not in items:raise ValueError('This item is not ready for outfit generation')
-        existing={j['id'] for j in self.store.jobs(uid)}
-        from app.outfits.footwear import shoe_pool_revision
-        footwear_revision=shoe_pool_revision(items.values(), self.config.accessory_pipeline)
+        existing={self._logical_job_key(job) for job in self.store.jobs(uid)}
         # A focused request is an explicit user action and may use any ready item.
         # Full-library/reconciliation scans skip add-ons as anchors, while `items`
         # remains unchanged so those add-ons are still available to clothing jobs.
         anchors=(items.values() if anchor_id is None else [items[anchor_id]])
         if anchor_id is None:
             anchors=(item for item in anchors if automatic_anchor(item))
-        jobs=[self.job_data(uid,item,footwear_revision) for item in anchors]
-        jobs=[j for j in jobs if j['id'] not in existing]
+        jobs=[self.job_data(uid,item) for item in anchors]
+        jobs=[job for job in jobs if self._logical_job_key(job) not in existing]
         if not jobs:return 0
         return self.store.enqueue_run(run_manifest(uid,jobs,self.config),jobs)
 
@@ -124,10 +124,19 @@ class OutfitLibrary:
 
     def progress(self, uid, items=None):
         items=self.items(uid) if items is None else items
-        from app.outfits.footwear import shoe_pool_revision
-        footwear_revision=shoe_pool_revision(items.values(), self.config.accessory_pipeline)
-        keys={self.job_data(uid,i,footwear_revision)['id'] for i in items.values()}
-        return dict(Counter(j['status'] for j in self.store.jobs(uid) if j['id'] in keys))
+        keys={self._logical_job_key(self.job_data(uid,item)) for item in items.values()}
+        # Pool-scoped historical jobs can share one logical anchor revision.
+        # Count that anchor once and prefer its completed result over a later
+        # obsolete duplicate, otherwise the UI incorrectly reports the whole
+        # wardrobe as still remaining after this migration.
+        priority={'complete':5,'processing':4,'queued':3,'failed':2,'obsolete':1}
+        logical={}
+        for job in self.store.jobs(uid):
+            key=self._logical_job_key(job)
+            if key not in keys:continue
+            if key not in logical or priority.get(job['status'],0)>priority.get(logical[key],0):
+                logical[key]=job['status']
+        return dict(Counter(logical.values()))
 
     def select_catalog(self, anchor, items):
         from app.outfits.catalog import select_catalog
@@ -137,7 +146,8 @@ class OutfitLibrary:
         # Re-read before EVERY paid stage, not just when the job was claimed.
         items = self.items(job['user_id'])
         anchor = items.get(job['anchor_item_id'])
-        if anchor is None or self.job_data(job['user_id'], anchor)['id'] != job['id']:
+        if (anchor is None or revision(anchor) != job['revision']
+                or job['generation_key'] != self.config.generation_key):
             raise SupersededOutfitJob()
         return tracked_call(store, job, run, stage, model, invoke, phase=phase)
 
@@ -169,9 +179,7 @@ class OutfitLibrary:
             if not self.config.footwear_pipeline:
                 self._process_visual_only(job, run, anchor, items, provider, stats)
                 return
-            from app.outfits.footwear import process, shoe_pool_revision
-            if job['id'] != self.job_data(uid,anchor,shoe_pool_revision(items.values(), True))['id']:
-                self.store.finish(job,'obsolete',stats,'Footwear or accessory pool changed');return
+            from app.outfits.footwear import process
             process(self,job,run,anchor,items,provider,stats)
             return
         except SupersededOutfitJob:
@@ -212,8 +220,12 @@ class OutfitLibrary:
                         and not compatibility_issues(members, self.config.compatibility_rules)
                         and not (layering and layering.hard_failure)):
                     valid.append(proposal)
-        if not exploration_quota_met(valid, taste_context):
-            raise ValueError('taste_exploration_quota_not_met')
+        # Keep exploration as a long-horizon ranking/exposure target.  It must not
+        # invalidate an otherwise usable paid batch merely because structural
+        # filtering changed the exact per-batch count.
+        stats['exploration_quota_met'] = exploration_quota_met(valid, taste_context)
+        if not stats['exploration_quota_met']:
+            stats['exploration_quota_warning'] = 'batch_quota_missed_after_structural_filtering'
         stats['generated'] = len(proposals.outfits)
         stats['candidate_diagnostics'] = []
         cache = {record['id']: record for record in self.store.evaluations(uid)}
@@ -288,7 +300,7 @@ class OutfitLibrary:
 
     @property
     def projection_key(self):
-        return digest(['current-outfits-v4-current-visual-only',self.config.require_shoes,self.config.evaluator_key,
+        return digest(['current-outfits-v5-outerwear-standalone-policy',self.config.require_shoes,self.config.evaluator_key,
                        self.config.compatibility_rules.model_dump()])
 
     def refresh_projection(self, uid):
@@ -331,13 +343,12 @@ class OutfitLibrary:
         display_order={'FullBody':0,'Tops':0,'Bottoms':1,'Outerwear':2,'Shoes':3,'Accessories':4}
         order=lambda i:(display_order[slot(i)],i.id)
         rows=self.store.evaluations(uid)
-        from app.outfits.footwear import shoe_pool_revision, admitted_evidence
-        footwear_revision=shoe_pool_revision(items.values(), self.config.accessory_pipeline)
+        from app.outfits.footwear import admitted_evidence
         valid=[]
         for row in rows:
             payload=row['payload'];ids=payload['item_ids']
             if row['evaluator_key']!=self.config.evaluator_key:continue
-            if self.config.footwear_pipeline and not admitted_evidence(payload,footwear_revision):continue
+            if self.config.footwear_pipeline and not admitted_evidence(payload):continue
             if any(i not in items or not record_revision_matches(payload,items[i]) for i in ids):continue
             valid.append(row)
         # A new rejection must override an old accepted variant. Keep unreviewed
@@ -354,7 +365,7 @@ class OutfitLibrary:
         for row in valid:
             payload=row['payload'];ids=payload['item_ids']
             if row['evaluator_key']!=self.config.evaluator_key:continue
-            if self.config.footwear_pipeline and not admitted_evidence(payload,footwear_revision):continue
+            if self.config.footwear_pipeline and not admitted_evidence(payload):continue
             if row['signature'] in reviewed and reviewed[row['signature']]['id']!=row['id']:continue
             members=sorted([items[i] for i in ids],key=order)
             core=core_items(members, require_shoes=self.config.require_shoes)
@@ -375,7 +386,18 @@ class OutfitLibrary:
             extras=[i for i in members if i not in core]
             full_review=VisualReview.model_validate(payload['visual_review']) if row['evaluator_key']==self.config.evaluator_key and payload.get('visual_review') else None
             approved_extras=extras
-            if full_review is not None and full_review.optional_layering.verdict!='clear_improvement':
+            optional_decisions = {
+                value.get('item_id'): value for value in payload.get('optional_item_reviews', [])
+                if isinstance(value, dict) and value.get('item_id')
+            }
+            if full_review is not None and optional_decisions:
+                approved_extras = [
+                    item for item in extras
+                    if optional_decisions.get(item.id, {}).get('verdict') == 'clear_improvement'
+                    or (slot(item) == 'Outerwear'
+                        and optional_decisions.get(item.id, {}).get('verdict') == 'no_improvement')
+                ]
+            elif full_review is not None and full_review.optional_layering.verdict!='clear_improvement':
                 # Compatible outerwear can remain a useful colder-weather option
                 # without claiming that it aesthetically improves the base. Other
                 # removable layers/accessories retain the clear-improvement bar.

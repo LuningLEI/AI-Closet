@@ -1,7 +1,9 @@
 import Foundation
 
 enum AppConfiguration {
-    static let backendBaseURL = URL(string: "http://127.0.0.1:8000")!
+    static var backendBaseURL: URL {
+        configuredURL(for: "BACKEND_BASE_URL") ?? URL(string: "http://127.0.0.1:8001")!
+    }
     static let defaultSupabaseURL = URL(string: "https://hhwebmfsrcwcblaxnpdh.supabase.co")
     static let defaultSupabaseAnonKey = "sb_publishable_EpIWwWSRvI9jyovGvkwX5g_tQkde9Ki"
 

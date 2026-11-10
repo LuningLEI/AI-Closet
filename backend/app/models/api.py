@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator, model_validator
 
 from app.core.constants import SIGNED_IMAGE_URL_EXPIRES_SECONDS
 from app.core.versions import PROFILE_VERSION, STYLE_PREFERENCE_VERSION, TAXONOMY_VERSION
@@ -37,6 +37,20 @@ class SignedUrlContract(BaseModel):
     refresh_strategy: str = "Call the owning API again to receive a fresh signed image URL."
 
 
+class WearingProfileUpdate(BaseModel):
+    """User-facing garment capabilities; technical fit evidence remains model-owned."""
+    can_wear_alone: StrictBool | None = None
+    can_layer_over: StrictBool | None = None
+    can_layer_under: StrictBool | None = None
+    requires_inner_layer: StrictBool | None = None
+
+    @model_validator(mode="after")
+    def consistent_capabilities(self):
+        if self.requires_inner_layer is True and self.can_wear_alone is True:
+            raise ValueError("An item requiring an inner layer cannot be worn alone.")
+        return self
+
+
 class ClothingItemUpdateRequest(BaseModel):
     category: str
     subtype: str | None = None
@@ -48,10 +62,18 @@ class ClothingItemUpdateRequest(BaseModel):
     material: str | None = None
     length: str | None = None
     sleeve_length: str | None = None
+    wearing_profile: WearingProfileUpdate | None = None
+    wearing_profile_override: bool = False
     edit_source: Literal["ios", "unknown", "ios_card_open"] = "unknown"
     occasion_before: str | None = None
     occasion_threshold_at_edit: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     occasion_thresholds_at_edit: dict[str, float] | None = None
+
+    @model_validator(mode="after")
+    def layering_override_has_values(self):
+        if self.wearing_profile_override and self.wearing_profile is None:
+            raise ValueError("A layering override requires wearing_profile values.")
+        return self
 
     @field_validator('material', 'length', 'sleeve_length', mode='before')
     @classmethod

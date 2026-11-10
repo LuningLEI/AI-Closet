@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.ai.gateway import AIGateway, build_ai_gateway
+from app.ai.gateway import AIGateway, build_embedding_gateway
 from app.core.config import settings
 from app.core.constants import OPENAI_EMBEDDING_TIMEOUT_SECONDS
 from app.models.domain import ClothingItemRecord, RecommendationContext
@@ -10,7 +10,7 @@ from app.models.domain import ClothingItemRecord, RecommendationContext
 
 class EmbeddingService:
     def __init__(self, gateway: AIGateway | None = None) -> None:
-        self.gateway = gateway or build_ai_gateway()
+        self.gateway = gateway or build_embedding_gateway()
 
     def create_embedding(self, text: str) -> list[float] | None:
         embedding, _ = self.create_embedding_with_usage(text)
@@ -31,6 +31,12 @@ class EmbeddingService:
 
 
 def item_embedding_text(item: ClothingItemRecord) -> str:
+    wearing = item.wearing_profile
+    layering = ", ".join(
+        f"{name}={wearing.get(name)}"
+        for name in ("can_wear_alone", "can_layer_over", "can_layer_under", "requires_inner_layer")
+        if wearing.get(name) is not None
+    )
     return " ".join(
         value
         for value in [
@@ -41,6 +47,7 @@ def item_embedding_text(item: ClothingItemRecord) -> str:
             f"season: {item.season}",
             f"style: {item.style}",
             f"occasion: {item.occasion}",
+            f"layering capabilities: {layering}" if layering else "",
             f"description: {item.recognition_summary or ''}",
         ]
         if value

@@ -1437,12 +1437,12 @@
           "analysis_version": {
             "type": "string",
             "title": "Analysis Version",
-            "default": "clothing-analysis-v1"
+            "default": "clothing-analysis-v2-layering-capacity"
           },
           "taxonomy_version": {
             "type": "string",
             "title": "Taxonomy Version",
-            "default": "taxonomy-v1"
+            "default": "taxonomy-v2-no-joggers"
           },
           "feature_version": {
             "type": "string",
@@ -1762,6 +1762,21 @@
               }
             ],
             "title": "Sleeve Length"
+          },
+          "wearing_profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WearingProfileUpdate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "wearing_profile_override": {
+            "type": "boolean",
+            "title": "Wearing Profile Override",
+            "default": false
           },
           "edit_source": {
             "type": "string",
@@ -2428,6 +2443,11 @@
             "type": "number",
             "title": "Category Balance",
             "default": 0
+          },
+          "layering_fit": {
+            "type": "number",
+            "title": "Layering Fit",
+            "default": 0
           }
         },
         "type": "object",
@@ -2514,6 +2534,19 @@
             "type": "integer",
             "title": "Limit",
             "default": 3
+          },
+          "rotation_seed": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rotation Seed"
           }
         },
         "type": "object",
@@ -2740,7 +2773,7 @@
           "taxonomy_version": {
             "type": "string",
             "title": "Taxonomy Version",
-            "default": "taxonomy-v1"
+            "default": "taxonomy-v2-no-joggers"
           },
           "style_preference_version": {
             "type": "string",
@@ -2854,6 +2887,46 @@
             "type": "boolean",
             "title": "Model Training Consent",
             "default": false
+          },
+          "personalization_enabled": {
+            "type": "boolean",
+            "title": "Personalization Enabled",
+            "default": true
+          },
+          "feedback_learning_enabled": {
+            "type": "boolean",
+            "title": "Feedback Learning Enabled",
+            "default": true
+          },
+          "exploration_level": {
+            "type": "string",
+            "enum": [
+              "familiar",
+              "balanced",
+              "adventurous"
+            ],
+            "title": "Exploration Level",
+            "default": "balanced"
+          },
+          "rotation_level": {
+            "type": "string",
+            "enum": [
+              "repeat_freely",
+              "balanced",
+              "more_variety"
+            ],
+            "title": "Rotation Level",
+            "default": "balanced"
+          },
+          "temperature_sensitivity": {
+            "type": "string",
+            "enum": [
+              "runs_cold",
+              "neutral",
+              "runs_warm"
+            ],
+            "title": "Temperature Sensitivity",
+            "default": "neutral"
           },
           "profile_features": {
             "additionalProperties": true,
@@ -3095,6 +3168,76 @@
               }
             ],
             "title": "Model Training Consent"
+          },
+          "personalization_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Personalization Enabled"
+          },
+          "feedback_learning_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feedback Learning Enabled"
+          },
+          "exploration_level": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "familiar",
+                  "balanced",
+                  "adventurous"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exploration Level"
+          },
+          "rotation_level": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "repeat_freely",
+                  "balanced",
+                  "more_variety"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rotation Level"
+          },
+          "temperature_sensitivity": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "runs_cold",
+                  "neutral",
+                  "runs_warm"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature Sensitivity"
           },
           "profile_features": {
             "anyOf": [
@@ -3350,6 +3493,57 @@
         },
         "type": "object",
         "title": "WearStatus"
+      },
+      "WearingProfileUpdate": {
+        "properties": {
+          "can_wear_alone": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Can Wear Alone"
+          },
+          "can_layer_over": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Can Layer Over"
+          },
+          "can_layer_under": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Can Layer Under"
+          },
+          "requires_inner_layer": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requires Inner Layer"
+          }
+        },
+        "type": "object",
+        "title": "WearingProfileUpdate",
+        "description": "User-facing garment capabilities; technical fit evidence remains model-owned."
       },
       "WeatherLocationResponse": {
         "properties": {

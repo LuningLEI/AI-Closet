@@ -18,7 +18,7 @@ FastAPI service for AI Closet.
 
 ```bash
 cd backend
-/opt/anaconda3/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+/opt/anaconda3/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
 ```
 
 Worker:
@@ -41,6 +41,16 @@ Run tests:
 cd backend
 /opt/anaconda3/bin/python -m pytest
 ```
+
+## AI provider configuration
+
+Production model calls use one application-owned gateway contract. Responses-style
+providers use `AI_PROVIDER=openai-compatible`; hosted open-weight VLMs exposing
+OpenAI-compatible Chat Completions use `AI_PROVIDER=chat-completions`. Before a
+deployed provider switch, set `AI_ALLOWED_MODELS` to a comma-separated allowlist
+and set `AI_CHAT_SCHEMA_MODE` to the strongest mode verified for that exact
+provider/model pair. Provider comparisons must use the read-only shadow tools
+under `tools/evaluation/`; they never replace production recognition or outfits.
 
 ## Direct-Vision Baseline Evaluation
 
@@ -103,6 +113,70 @@ cd backend
 ```
 
 The `Garment Labels` sheet contains one garment per row and blank occasion, style, and season labels for three human annotators plus `baseline-picture` and `baseline-vector`. The `Outfit Judgments` sheet contains 100 randomized structurally valid outfits, each with a varied prompt and two five-rater columns: wearability and aesthetics. Both use the three-way verdict dropdown: `Inappropriate`, `Neutral`, or `Appropriate`.
+
+### Recognition model shadow evaluation
+
+Use the shadow harness before changing the production recognition provider. It
+freezes stored production labels and item-card-confirmed labels, calls the
+candidate endpoint, and writes only below `evaluation/model_migration/recognition_shadow/`.
+It never updates garments, recognition history, jobs, embeddings, or outfits.
+
+First prepare a small category-balanced smoke test; this makes no model calls:
+
+```bash
+python -m tools.evaluation.recognition_shadow prepare \
+  --user-id YOUR_SUPABASE_USER_ID \
+  --model CANDIDATE_MODEL_ID \
+  --model-revision CANDIDATE_REVISION \
+  --base-url https://candidate.example/v1 \
+  --protocol chat-completions \
+  --limit 10 \
+  --baseline PATH_OR_ID_OF_RECOVERY_BASELINE
+```
+
+For a memory-constrained local vision endpoint, add
+`--image-max-dimension 448 --output-max-tokens 512`. The harness downloads each signed source image,
+applies EXIF orientation, resizes it proportionally in memory, and sends a
+JPEG data URL without persisting the source URL or resized image. Leave the
+image option at its default `0` when evaluating a remote provider on original
+input. The output cap is also versioned in the run manifest.
+
+Set `SHADOW_AI_API_KEY` outside source control, then run the returned directory:
+
+```bash
+python -m tools.evaluation.recognition_shadow run --run-dir SHADOW_RUN_DIRECTORY
+```
+
+For a paired remote comparison, clone one prepared run and give every provider
+the same positive `--image-max-dimension` (for example `2048`). Each result
+records the exact JPEG dimensions and SHA-256 so matching item hashes can be
+verified across runs. Native Gemini structured output is supported with
+`--protocol gemini-generate-content`,
+`--base-url https://generativelanguage.googleapis.com/v1beta`, and
+`--api-key-env GEMINI_API_KEY`. Hugging Face router runs use
+`--api-key-env HF_TOKEN`. Provider keys belong in the local environment or
+untracked `.env`, never in a run manifest.
+
+Each garment is committed as an independent JSON result, so the same command
+resumes safely after interruption. `--max-items 1` is useful for the first real
+request; `--retry-failures` is explicit because retries may cost money. Use
+`--allow-no-api-key` only for a trusted local endpoint. Once the smoke test is
+valid, prepare a new run with `--limit 0` for all eligible garments.
+
+Per-item results retain the redacted raw provider payload and text, cleaned
+text, parsed prediction, scalar-normalization input, and final normalized
+prediction. Known trailing Kimi control tokens are removed only from the
+cleaned copy. Signed URLs and in-memory image data are redacted from audit
+output.
+
+`summary.json` reports schema/model-call success, latency, usage and optional
+configured cost; agreement with current production labels is kept separate from
+accuracy on item-card-confirmed human labels. `results.csv` contains item-level
+disagreements for review. Rebuild metrics without calls using:
+
+```bash
+python -m tools.evaluation.recognition_shadow summarize --run-dir SHADOW_RUN_DIRECTORY
+```
 
 ### Occasion recognition scores
 
@@ -468,7 +542,7 @@ Apply `sql/migrations/010_outfit_error_diagnostics.sql` **before restarting the 
 
 ### Yoga pants taxonomy
 
-`Activewear / Yoga Pants` covers yoga-specific fitted, straight, flared and wide-leg pants. `Workout Leggings` remains for general exercise leggings. The existing `fit` field carries silhouette (`Skinny`, `Straight-leg`, `Flared`, `Wide-leg`) and is included in embedding input and visual outfit context. Yoga pants occupy a bottom slot in outfits; wide-leg/flared pairs cannot serve as a leggings-like lower inner layer. Explicit yoga subtype labels normalize to Activewear, but ordinary wide-leg pants and joggers are not automatically relabeled. iOS reads the new subtype from the backend taxonomy. No schema migration or automatic relabeling of existing garments is included. Updated outfit prompts change generation/evaluation keys: an active/restarted outfit worker can enqueue work for the new version; keep it stopped if generation should remain paused.
+`Activewear / Yoga Pants` covers yoga-specific fitted, straight, flared and wide-leg pants. `Workout Leggings` remains for general exercise leggings. The existing `fit` field carries silhouette (`Skinny`, `Straight-leg`, `Flared`, `Wide-leg`) and is included in embedding input and visual outfit context. Yoga pants occupy a bottom slot in outfits; wide-leg/flared pairs cannot serve as a leggings-like lower inner layer. Explicit yoga subtype labels normalize to Activewear, but ordinary casual pants are not automatically relabeled. iOS reads the subtype list from the backend taxonomy. No schema migration or automatic relabeling of existing garments is included. Updated outfit prompts change generation/evaluation keys: an active/restarted outfit worker can enqueue work for the new version; keep it stopped if generation should remain paused.
 
 If item deletion fails with `23503` on `outfit_model_calls_job_id_fkey`, apply migration `011_outfit_call_job_delete.sql`. Garment deletion already cascades to build jobs; model call history now survives with a null job reference. Run ownership and usage/cost counters remain intact. In-flight calls may finish after deletion, but new calls still require a valid job lease and stale outfit publication remains guarded. Interrupted detached calls become `unknown` through normal recovery rather than being counted as free. Applying this migration does not delete any garments or restart failed tasks.
 

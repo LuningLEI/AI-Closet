@@ -1,0 +1,52 @@
+{
+  "generation_model": "qwen/qwen3-vl-30b-a3b-instruct",
+  "evaluation_model": "qwen/qwen3-vl-30b-a3b-instruct",
+  "pipeline_mode": "vision_then_visual",
+  "image_detail": "high",
+  "catalog_limit": 30,
+  "catalog_policy": "bottom-purpose-balanced-v1",
+  "candidates_per_anchor": 8,
+  "max_items_per_outfit": 6,
+  "layering_fit_policy": {
+    "version": "layering-fit-v1",
+    "hard_failure_threshold": -1.5,
+    "penalty_points_per_gap": 8.0,
+    "maximum_penalty_points": 20.0,
+    "hoodie_restrictive_outer_penalty": 1.2,
+    "hoodie_stiff_jacket_penalty": 0.9,
+    "bulky_restrictive_outer_penalty": 0.8,
+    "roomy_outer_bonus": 0.3
+  },
+  "request_timeout_seconds": 240,
+  "lease_seconds": 7200,
+  "max_attempts": 2,
+  "poll_seconds": 5,
+  "pricing": {
+    "qwen/qwen3-vl-30b-a3b-instruct": {
+      "input_per_million": 0.2,
+      "cached_input_per_million": 0.2,
+      "output_per_million": 0.7,
+      "source": "Novita AI",
+      "as_of": "2026-11-09"
+    }
+  },
+  "generation_prompt": "prompts/generate.txt",
+  "evaluation_prompt": "prompts/evaluate.txt",
+  "require_shoes": true,
+  "footwear_pipeline": true,
+  "footwear_catalog_limit": 8,
+  "vision_footwear_limit": 4,
+  "footwear_selection_model": "qwen/qwen3-vl-30b-a3b-instruct",
+  "accessory_pipeline": true,
+  "accessory_catalog_limit": 8,
+  "vision_accessory_limit": 4,
+  "composite_visual_inputs": true,
+  "visual_batch_size": 2,
+  "composite_max_dimension": 1024,
+  "per_optional_item_review": true,
+  "clothing_prompt": "prompts/generate_clothing.txt",
+  "clothing_input_mode": "metadata-only",
+  "clothing_policy_version": "qwen-metadata-bottom-purpose-balanced-v1",
+  "accessory_selection_prompt": "prompts/select_accessories.txt",
+  "visual_review_prompt": "prompts/review_visual.txt"
+}

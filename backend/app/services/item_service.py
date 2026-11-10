@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import traceback
 import httpx
+import time
 from app.repositories.read_retry import DatabaseReadUnavailable
 from app.services.label_confirmation import confirmation, LABEL_FIELDS
 from app.services.season_support import normalize_seasons
@@ -14,7 +15,7 @@ from app.services.occasion_support import effective_occasion, model_occasions, o
 from app.services.taxonomy import OCCASIONS,merge_preferences,user_taxonomy
 from app.services.occasion_thresholds import user_thresholds
 
-from app.core.constants import DEFAULT_SEASON, RecognitionSource, RecognitionStatus
+from app.core.constants import DEFAULT_CATEGORY, DEFAULT_SEASON, RecognitionSource, RecognitionStatus
 from app.core.versions import ITEM_FEATURE_VERSION, MANUAL_TAXONOMY_EDIT_VERSION
 from app.models.api import ClothingItemUpdateRequest, ImageEditMetadata
 from app.models.domain import ClothingAnalysis, WearingProfile, ColorTone, ClothingItemRecord, ItemEditEvent, RecognitionRecord
@@ -33,7 +34,7 @@ class ItemService:
     def confirm_labels(self, user_id, item_id, payload):
         # Persist exactly the displayed values, not a later background prediction.
         values = {key:getattr(payload,key) for key in LABEL_FIELDS if key in payload.model_fields_set}
-        for _ in range(5):
+        for attempt in range(5):
             current = self.repository.get_item(item_id,user_id)
             if current is None: raise HTTPException(404, "Clothing item not found.")
             # Opening a card is not a manual correction of pending/failure placeholders.
@@ -52,6 +53,10 @@ class ItemService:
                 updates['feature_vector'] = feature_vector(analysis)
             result = self.repository.commit_item_change(current,updates)
             if result is not None: return result
+            if attempt < 4:
+                # Avoid exhausting optimistic retries while a concurrent
+                # recognition/embedding metadata transaction is settling.
+                time.sleep(0.05 * (2 ** attempt))
         raise HTTPException(409, "Item changed while confirming. Please retry.")
 
     def update_item(self, user_id: str, item_id: str, payload: ClothingItemUpdateRequest) -> ClothingItemRecord:
@@ -68,7 +73,15 @@ class ItemService:
                      (dict.fromkeys(OCCASIONS, payload.occasion_threshold_at_edit)
                       if payload.occasion_threshold_at_edit is not None else current_thresholds))
         expected_before = effective_occasion(existing_item, threshold)
-        before = payload.occasion_before if payload.occasion_before is not None else expected_before
+        # Uncategorized placeholders deliberately skip open-card confirmation,
+        # so their cached Occasion is not a trustworthy concurrency token after
+        # a recognition rerun. Manual categorization starts from the current DB
+        # projection instead. Normal recognized/confirmed cards stay strict.
+        before = (
+            expected_before
+            if existing_item.category == DEFAULT_CATEGORY or payload.occasion_before is None
+            else payload.occasion_before
+        )
         if occasion_set(before) != occasion_set(expected_before):
             raise HTTPException(status_code=409, detail="Occasion changed since this item was opened. Refresh and try again.")
         selected = occasion_set(payload.occasion)
@@ -86,7 +99,7 @@ class ItemService:
         analysis = self._manual_analysis(payload)
         analysis.occasion = payload.occasion if (existing_item.metadata or {}).get("label_confirmation") else effective_occasion(projected, current_thresholds)
         previous_tags = existing_item.recognition_tags or {}
-        analysis.wearing_profile = WearingProfile.model_validate(previous_tags.get("wearing_profile") or {})
+        analysis.wearing_profile = self._manual_wearing_profile(existing_item, payload)
         analysis.color_tones = [ColorTone.model_validate(t) for t in previous_tags.get('color_tones',[]) if t.get('color') in {v.strip() for v in analysis.color.split(',')}]
         analysis.occasion_scores = ClothingAnalysis.model_validate({
             "occasion_scores": previous_tags.get("occasion_scores", []),
@@ -136,6 +149,7 @@ class ItemService:
                 "occasion": analysis.occasion,
                 "recognition_source": RecognitionSource.MANUAL_EDIT,
                 "recognition_summary": analysis.summary,
+                "recognition_tags": analysis.model_dump(),
             }
         )
         updates["semantic_vector"] = self.embedding_service.create_embedding(item_embedding_text(item_for_embedding))
@@ -144,6 +158,11 @@ class ItemService:
         updated_item = existing_item.model_copy(update=updates)
 
         changes = self._attribute_changes(existing_item, updated_item)
+        if existing_item.wearing_profile != updated_item.wearing_profile:
+            changes["wearing_profile"] = {
+                "before": existing_item.wearing_profile,
+                "after": updated_item.wearing_profile,
+            }
         # Occasion events describe user gestures relative to the UI snapshot, not stale DB labels.
         changes.pop("occasion", None)
         if added or removed:
@@ -185,6 +204,29 @@ class ItemService:
                 raw_payload={"previous_item": existing_item.model_dump(), "manual_payload": payload.model_dump()},
             )
         updated_item = self.repository.commit_item_change(existing_item,updates,recognition=recognition,event=event)
+        if updated_item is None:
+            latest = self.repository.get_item(item_id, user_id)
+            if latest is None:
+                raise HTTPException(status_code=404, detail="Clothing item not found.")
+            # Metadata and vectors may finish in the background while the
+            # manual embedding is calculated. Rebase only if all protected
+            # garment fields and the image are unchanged; real concurrent
+            # label/photo edits must remain a conflict.
+            from app.repositories.item_transactions import expected_item
+            protected = set(expected_item(existing_item)) - {"metadata"}
+            safe_to_rebase = all(
+                getattr(latest, field) == getattr(existing_item, field)
+                for field in protected
+            )
+            if safe_to_rebase:
+                rebased_updates = dict(updates)
+                rebased_updates["metadata"] = {
+                    **(latest.metadata or {}),
+                    **(updates.get("metadata") or {}),
+                }
+                updated_item = self.repository.commit_item_change(
+                    latest, rebased_updates, recognition=recognition, event=event,
+                )
         if updated_item is None:
             raise HTTPException(409,"Item changed while saving. Refresh and retry.")
         return updated_item
@@ -343,6 +385,123 @@ class ItemService:
             raw_occasion=payload.occasion,
             raw_seasons=seasons or [DEFAULT_SEASON],
         )
+
+    @staticmethod
+    def _taxonomy_wearing_profile(category: str, subtype: str | None) -> WearingProfile:
+        """Safe defaults after a user changes the garment's taxonomy.
+
+        These defaults remove stale model claims.  Only broadly deterministic
+        capabilities are filled; garment-specific fit directions remain unknown
+        until the user explicitly confirms them.
+        """
+        from app.services.recommendation.rules import recommendation_slot
+
+        slot = recommendation_slot(category, subtype)
+        common = {
+            "can_layer_over": None,
+            "can_layer_under": None,
+            "lower_layer_role": None,
+            "closure_type": None,
+            "layering_bulk": None,
+            "outer_capacity": None,
+            "material_stiffness": None,
+            "hood_volume": None,
+            "sleeve_volume": None,
+        }
+        if subtype == "Cardigan":
+            return WearingProfile.model_validate({
+                **common,
+                "layering_region": "upper_body",
+                "can_wear_alone": True,
+                "can_layer_over": True,
+                "requires_inner_layer": False,
+                "wearing_modes": ["standalone", "outer_layer_closed"],
+                "evidence": "Derived from the user-selected Cardigan subtype.",
+            })
+        if category == "Intimates" and subtype == "Tights":
+            return WearingProfile.model_validate({
+                **common,
+                "layering_region": "lower_body",
+                "lower_layer_role": "base",
+                "can_wear_alone": False,
+                "can_layer_under": True,
+                "requires_inner_layer": False,
+                "wearing_modes": ["inner_layer"],
+                "evidence": "Derived from the user-selected Tights subtype.",
+            })
+        if slot == "Outerwear":
+            return WearingProfile.model_validate({
+                **common,
+                "layering_region": "upper_body",
+                "can_wear_alone": False,
+                "can_layer_over": True,
+                "requires_inner_layer": True,
+                "wearing_modes": ["outer_layer_closed"],
+                "evidence": "Derived from the user-selected outerwear taxonomy.",
+            })
+        if slot == "Tops" or (category == "Activewear" and slot == "Activewear"):
+            return WearingProfile.model_validate({
+                **common,
+                "layering_region": "upper_body",
+                "can_wear_alone": True,
+                "requires_inner_layer": False,
+                "wearing_modes": ["standalone"],
+                "evidence": "Derived from the user-selected upper-body taxonomy.",
+            })
+        if slot == "Bottoms":
+            return WearingProfile.model_validate({
+                **common,
+                "layering_region": "lower_body",
+                "can_wear_alone": True,
+                "requires_inner_layer": False,
+                "wearing_modes": ["standalone"],
+                "evidence": "Derived from the user-selected lower-body taxonomy.",
+            })
+        if slot == "FullBody":
+            return WearingProfile.model_validate({
+                **common,
+                "layering_region": "full_body",
+                "can_wear_alone": True,
+                "requires_inner_layer": False,
+                "wearing_modes": ["standalone"],
+                "evidence": "Derived from the user-selected full-body taxonomy.",
+            })
+        return WearingProfile(evidence="Taxonomy changed; layering capabilities require confirmation.")
+
+    @classmethod
+    def _manual_wearing_profile(cls, existing_item: ClothingItemRecord,
+                                payload: ClothingItemUpdateRequest) -> WearingProfile:
+        taxonomy_changed = (
+            existing_item.category != payload.category
+            or existing_item.subtype != payload.subtype
+        )
+        profile = (
+            cls._taxonomy_wearing_profile(payload.category, payload.subtype)
+            if taxonomy_changed
+            else WearingProfile.model_validate(existing_item.wearing_profile)
+        )
+        from app.services.outerwear_policy import enforce_outerwear_profile
+        if not payload.wearing_profile_override:
+            return enforce_outerwear_profile(payload.category, payload.subtype, profile)
+
+        values = payload.wearing_profile.model_dump(exclude_unset=True)
+        data = {**profile.model_dump(), **values}
+        # User capability choices replace model-inferred modes.  Rebuilding the
+        # list prevents a stale `standalone`/`outer_layer_*` mode from
+        # contradicting the newly confirmed booleans.
+        modes = []
+        if data["can_wear_alone"] is True:
+            modes.append("standalone")
+        if data["can_layer_under"] is True:
+            modes.append("inner_layer")
+        if data["can_layer_over"] is True:
+            modes.append("outer_layer_closed")
+            if data.get("closure_type") in {"buttons", "zipper", "open_front", "wrap"}:
+                modes.append("outer_layer_open")
+        data["wearing_modes"] = modes
+        data["evidence"] = "User-confirmed layering capabilities."
+        return enforce_outerwear_profile(
+            payload.category, payload.subtype, WearingProfile.model_validate(data))
 
     @staticmethod
     def _attribute_changes(before: ClothingItemRecord, after: ClothingItemRecord) -> dict[str, dict]:
