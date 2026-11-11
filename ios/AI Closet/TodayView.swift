@@ -311,7 +311,7 @@ struct TodayView: View {
             ContentUnavailableView(
                 viewModel.todayRecommendationErrorMessage == nil ? appSettings.text("today.no_recommendations") : appSettings.text("today.recommendations_unavailable"),
                 systemImage: "sparkles",
-                description: Text(viewModel.todayRecommendationErrorMessage.map(appSettings.resolvedText) ?? "Save outfits in Closet first. Items worn within the last 48 hours are excluded from recommendations.")
+                description: Text(viewModel.todayRecommendationErrorMessage.map(appSettings.resolvedText) ?? "No saved outfits currently match the selected occasion, temperature, and recent-wear rules.")
             )
         }
     }

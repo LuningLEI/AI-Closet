@@ -42,7 +42,8 @@ struct APIOutfitRecommendationCard: View {
             }
             if editedItems != nil { Text("Your saved version · refresh to recalculate its score").font(.caption).foregroundStyle(.secondary) }
             outfitLineup
-            OutfitActions(surface: surface, items: editedItems ?? recommendation.items,
+            OutfitActions(surface: surface, outfitID: persistentOutfitID,
+                          items: editedItems ?? recommendation.items,
                           onSaved: { editedItems = $0 }, onDisliked: onDisliked,
                           onWorn: onWorn, onWearUndone: onWearUndone)
         }
@@ -61,6 +62,10 @@ struct APIOutfitRecommendationCard: View {
         }
         .shadow(color: .black.opacity(0.06), radius: 18, y: 10)
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: recommendation.id)
+    }
+
+    private var persistentOutfitID: UUID? {
+        UUID(uuidString: recommendation.id.split(separator: ":", maxSplits: 1).first.map(String.init) ?? "")
     }
 
     private var outfitLineup: some View {

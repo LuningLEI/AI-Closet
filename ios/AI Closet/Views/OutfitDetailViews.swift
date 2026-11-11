@@ -102,6 +102,7 @@ extension Notification.Name {
 struct PersonalOutfitBody: Encodable {
     let itemIds: [UUID]
     let title: String
+    let replacesOutfitId: UUID?
 }
 struct WearBody: Encodable {
     let id: UUID
@@ -179,8 +180,8 @@ struct OutfitActions: View {
             if let message { Text(message).font(.footnote).foregroundStyle(.secondary) }
         }
         .sheet(isPresented: $editing) {
-            OutfitComposerView(initialItems: items) { result in
-                onSaved(result.items); message = "Saved as a new outfit."
+            OutfitComposerView(initialItems: items, replacesOutfitID: outfitID) { result in
+                onSaved(result.items); message = outfitID == nil ? "Saved as a new outfit." : "Outfit changes saved."
                 if surface == .today { Task { await wearToday(result.items) } }
             }
         }
@@ -309,9 +310,12 @@ struct OutfitComposerView: View {
     @State private var replacing: UUID?
     @State private var saving = false
     @State private var error: String?
+    let replacesOutfitID: UUID?
     let onSaved: (LibraryOutfitDTO) -> Void
-    init(initialItems: [ClothingItemDTO] = [], onSaved: @escaping (LibraryOutfitDTO) -> Void = { _ in }) {
+    init(initialItems: [ClothingItemDTO] = [], replacesOutfitID: UUID? = nil,
+         onSaved: @escaping (LibraryOutfitDTO) -> Void = { _ in }) {
         _selected = State(initialValue: initialItems)
+        self.replacesOutfitID = replacesOutfitID
         self.onSaved = onSaved
     }
     private var candidates: [ClothingItemDTO] {
@@ -454,7 +458,7 @@ struct OutfitComposerView: View {
         saving = true
         defer { saving = false }
         do {
-            let result: LibraryOutfitDTO = try await APIClient.shared.post("/api/v1/outfits/personal", token: await authStore.validAccessToken(), body: PersonalOutfitBody(itemIds: selected.map(\.id), title: title))
+            let result: LibraryOutfitDTO = try await APIClient.shared.post("/api/v1/outfits/personal", token: await authStore.validAccessToken(), body: PersonalOutfitBody(itemIds: selected.map(\.id), title: title, replacesOutfitId: replacesOutfitID))
             onSaved(result)
             NotificationCenter.default.post(name: .outfitLibraryChanged, object: nil)
             dismiss()

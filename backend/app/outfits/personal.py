@@ -14,6 +14,7 @@ from app.services.taste_profile_service import TasteProfileService
 class PersonalOutfitRequest(BaseModel):
     item_ids: list[UUID] = Field(min_length=1,max_length=12)
     title: str = Field(default='My outfit',min_length=1,max_length=120)
+    replaces_outfit_id: UUID | None = None
 
 class WearRequest(BaseModel):
     id: UUID
@@ -109,19 +110,35 @@ class PersonalOutfits:
 
     def save(self,uid,payload):
         ids,items=self.owned_items(uid,payload.item_ids)
-        oid=str(uuid5(NAMESPACE_URL,'personal-outfit:'+uid+':'+','.join(ids)))
+        replaced=str(payload.replaces_outfit_id) if payload.replaces_outfit_id else None
+        existing = next((row for row in self.rows('personal_outfits',uid)
+                         if row['id'] == replaced or row.get('source_outfit_id') == replaced), None) if replaced else None
+        oid=(existing or {}).get('id') or str(uuid5(
+            NAMESPACE_URL,
+            ('personal-outfit-override:'+uid+':'+replaced) if replaced
+            else ('personal-outfit:'+uid+':'+','.join(ids)),
+        ))
+        source_outfit_id=existing.get('source_outfit_id') if existing is not None else replaced
         row={'id':oid,'user_id':uid,'item_ids':ids,'title':payload.title,'created_at':datetime.now(timezone.utc).isoformat(),
-             'feature_snapshot':snapshot_items(items)}
+             'feature_snapshot':snapshot_items(items),
+             'source_outfit_id':source_outfit_id}
         if hasattr(self.store,'client'):
-            row=self.store.client.rpc('save_personal_outfit',{'p_id':oid,'p_user':uid,'p_items':ids,'p_title':payload.title}).execute().data
+            row=self.store.client.rpc('save_personal_outfit_edit',{
+                'p_id':oid,'p_user':uid,'p_items':ids,'p_title':payload.title,
+                'p_source_outfit':replaced,
+            }).execute().data
         else:
             with self.store.db() as db:
-                inserted=db.execute('insert or ignore into personal_outfits values (?,?,?)',(oid,uid,json.dumps(row))).rowcount
-            if inserted:TasteProfileService(self.store).mark_source(uid)
+                previous=db.execute('select data from personal_outfits where id=? and user_id=?',(oid,uid)).fetchone()
+                db.execute('insert or replace into personal_outfits values (?,?,?)',(oid,uid,json.dumps(row)))
+            if previous is None or json.loads(previous[0])!=row:TasteProfileService(self.store).mark_source(uid)
         return self.dto(row,items)
 
     def dto(self,row,items):
-        return OutfitDTO(id=row['id'],items=items,aesthetic_score=None,structural_reason='Saved by you',aesthetic_reason=row['title'],source='personal',visual_review_status='pending')
+        return OutfitDTO(id=row['id'],items=items,aesthetic_score=None,structural_reason='Saved by you',aesthetic_reason=row['title'],source='personal',visual_review_status='pending',replaces_outfit_id=row.get('source_outfit_id'))
+
+    def overridden_ids(self,uid):
+        return {row['source_outfit_id'] for row in self.rows('personal_outfits',uid) if row.get('source_outfit_id')}
 
     def list(self,uid,anchor=None):
         items={i.id:i for i in self.repository.list_items_for_outfits(uid)}

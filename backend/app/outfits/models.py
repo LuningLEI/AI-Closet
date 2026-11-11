@@ -75,6 +75,7 @@ class OutfitDTO(BaseModel):
     aesthetic_reason: str
     visual_review_status: Literal['pending', 'passed'] = 'pending'
     liked: bool = False
+    replaces_outfit_id: str | None = None
 
 class LibraryResponse(BaseModel):
     outfits: list[OutfitDTO]

@@ -319,11 +319,13 @@ class OutfitLibrary:
     def list(self, uid, signer, base_url, anchor_id=None, offset=0, limit=30):
         if not hasattr(self.store,'projected_page'):
             from app.outfits.personal import PersonalOutfits
-            personal=PersonalOutfits(self.repository,self.store).list(uid,anchor_id)
+            personal_service=PersonalOutfits(self.repository,self.store)
+            personal=personal_service.list(uid,anchor_id)
+            overridden=personal_service.overridden_ids(uid)
             result=self._records_list(uid,signer,base_url,anchor_id,0,10_000_000)
             signatures={tuple(sorted(i.id for i in o.items)) for o in personal}
             for o in personal:o.items=signer.items(o.items,base_url)
-            combined=sorted(personal+[o for o in result.outfits if tuple(sorted(i.id for i in o.items)) not in signatures],key=lambda o:o.id)
+            combined=sorted(personal+[o for o in result.outfits if o.id not in overridden and tuple(sorted(i.id for i in o.items)) not in signatures],key=lambda o:o.id)
             result.total=len(combined);result.outfits=combined[offset:offset+limit]
             result.next_offset=offset+limit if offset+limit<len(combined) else None
             return result

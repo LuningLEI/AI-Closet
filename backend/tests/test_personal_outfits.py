@@ -2,12 +2,13 @@ from uuid import uuid4
 from datetime import datetime,timezone,timedelta
 import pytest
 from fastapi import HTTPException
-from test_outfit_library import setup,Signer
+from test_outfit_library import setup,Signer,run_all
 from app.outfits.personal import PersonalOutfits,PersonalOutfitRequest,WearRequest,OutfitFeedbackRequest
 from app.outfits.recommendations import (
     WearPolicy,
     policy_for_rotation,
     recommend_library,
+    occasion_eligible_results,
     rotate_near_tied_results,
     stratified_score_rotation,
     temperature_eligible_results,
@@ -50,6 +51,35 @@ def test_save_is_idempotent_scoped_and_visible_per_item(setup):
     assert lib.list(uid,Signer(),'').outfits[0].items[0].id
     lib.repository.delete_item(bottom.id,uid)
     assert lib.list(uid,Signer(),'').total==0
+
+
+def test_replace_items_persists_one_override_and_shadows_generated_outfit(setup):
+    uid,top,bottom,lib,_=setup
+    lib.build(uid);run_all(lib)
+    generated=lib.list(uid,Signer(),'').outfits[0]
+    replacement=lib.repository.add_item(bottom.model_copy(
+        update={'id':str(uuid4()),'image_path':'replacement.jpg','color':'Blue'}
+    ))
+    personal=PersonalOutfits(lib.repository,lib.store)
+
+    first=personal.save(uid,PersonalOutfitRequest(
+        item_ids=[top.id,replacement.id],replaces_outfit_id=generated.id,
+    ))
+    reopened=lib.list(uid,Signer(),'')
+    assert reopened.total==1
+    assert reopened.outfits[0].id==first.id
+    assert reopened.outfits[0].source=='personal'
+    assert reopened.outfits[0].replaces_outfit_id==generated.id
+    assert {item.id for item in reopened.outfits[0].items}=={top.id,replacement.id}
+
+    second=personal.save(uid,PersonalOutfitRequest(
+        item_ids=[bottom.id,replacement.id],replaces_outfit_id=first.id,
+    ))
+    assert second.id==first.id
+    assert len(personal.rows('personal_outfits',uid))==1
+    assert {item.id for item in lib.list(uid,Signer(),'').outfits[0].items}=={
+        bottom.id,replacement.id
+    }
 
 
 def test_wear_idempotency_undo_ownership(setup):
@@ -201,6 +231,99 @@ def test_temperature_gate_applies_before_score_band_sampling():
     assert [row.id for row in temperature_eligible_results(rows,40)] == [
         'compatible','winter-only'
     ]
+
+
+def test_occasion_gate_prefers_direct_matches_and_rejects_wrong_core_items():
+    class Item:
+        def __init__(self, identifier, category, occasion):
+            self.id=identifier
+            self.category=category
+            self.subtype='T-shirt' if category == 'Tops' else 'Trousers'
+            self.occasion=occasion
+    class Result:
+        def __init__(self, identifier, top_occasion, bottom_occasion):
+            self.id=identifier
+            self.items=[
+                Item(f'{identifier}-top','Tops',top_occasion),
+                Item(f'{identifier}-bottom','Bottoms',bottom_occasion),
+            ]
+
+    rows=[
+        Result('party','Party','Party'),
+        Result('mixed','Party','Everyday'),
+        Result('work','Work','Work'),
+    ]
+    assert [row.id for row in occasion_eligible_results(rows,'Party',5)] == ['party','mixed']
+    assert [row.id for row in occasion_eligible_results(rows,'Work',5)] == ['work']
+
+
+def test_occasion_gate_uses_everyday_only_as_safe_fallback_when_page_is_short():
+    class Item:
+        def __init__(self, identifier, occasion):
+            self.id=identifier;self.category='Tops';self.subtype='T-shirt';self.occasion=occasion
+    class Result:
+        def __init__(self, identifier, occasion):self.id=identifier;self.items=[Item(identifier,occasion)]
+
+    rows=[Result('direct','Travel'),Result('fallback','Everyday'),Result('wrong','Workout')]
+    assert [row.id for row in occasion_eligible_results(rows,'Travel',5)] == ['direct','fallback']
+    assert [row.id for row in occasion_eligible_results(rows,'Travel',1)] == ['direct']
+
+
+def test_date_occasion_uses_everyday_pieces_to_complete_or_backfill_a_page():
+    class Item:
+        def __init__(self, identifier, occasion):
+            self.id=identifier;self.category='Tops';self.subtype='Blouse';self.occasion=occasion
+    class Result:
+        def __init__(self, identifier, occasions):
+            self.id=identifier;self.items=[Item(f'{identifier}-{index}',occasion) for index,occasion in enumerate(occasions)]
+
+    rows=[
+        Result('date-with-basic',['Date','Everyday']),
+        Result('everyday-fallback',['Everyday','Everyday']),
+        Result('work-only',['Work','Work']),
+    ]
+    assert [row.id for row in occasion_eligible_results(rows,'Date',5)] == [
+        'date-with-basic','everyday-fallback'
+    ]
+
+
+def test_score_rotation_limits_variants_from_the_same_base_outfit():
+    class Breakdown:
+        weather_fit=20
+    class Item:
+        def __init__(self, identifier):
+            self.id=identifier;self.category='Tops';self.subtype='T-shirt';self.length=None
+    class Result:
+        def __init__(self, index):
+            self.id=f'variant-{index}';self.outfit_id='same-base' if index < 10 else f'base-{index}'
+            self.score=100-index;self.breakdown=Breakdown();self.missing_slots=[]
+            self.items=[Item(f'top-{index}')]
+
+    page=stratified_score_rotation([Result(index) for index in range(30)],'user','page',5,60)[:5]
+    assert sum(row.outfit_id == 'same-base' for row in page) <= 1
+
+
+def test_score_rotation_avoids_repeating_one_outerwear_when_alternatives_exist():
+    class Breakdown:
+        weather_fit=20
+    class Item:
+        def __init__(self, identifier, category, subtype):
+            self.id=identifier;self.category=category;self.subtype=subtype;self.length=None
+    class Result:
+        def __init__(self, index):
+            self.id=f'outfit-{index}';self.score=100-index
+            self.breakdown=Breakdown();self.missing_slots=[]
+            self.items=[
+                Item(f'top-{index}','Tops','T-shirt'),
+                Item('repeated-coat' if index < 10 else f'coat-{index}','Outerwear','Jacket'),
+            ]
+
+    page=stratified_score_rotation([Result(index) for index in range(30)],'user','page',5,60)[:5]
+    repeated=sum(
+        item.id == 'repeated-coat'
+        for row in page for item in row.items
+    )
+    assert repeated <= 1
 
 
 def test_temperature_gate_uses_celsius_season_and_exposed_clothing_boundaries():

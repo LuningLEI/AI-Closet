@@ -14,7 +14,7 @@ from app.outfits.service import OutfitLibrary
 from app.outfits.personal import PersonalOutfits
 from app.outfits.compatibility import compatibility_issues
 from app.outfits.service import structurally_valid
-from app.services.recommendation.rules import recommendation_slot,profile_memory_text
+from app.services.recommendation.rules import occasion_tokens,recommendation_slot,profile_memory_text
 from app.services.embedding_service import recommendation_context_text
 from app.services.occasion_support import occasion_for_display
 from app.services.occasion_thresholds import resolve_thresholds
@@ -180,11 +180,74 @@ def temperature_eligible_results(results, temperature_f, selection_seed="stable"
     return eligible
 
 
+def _occasion_match_strength(item, requested):
+    """Return 2 for a direct/peer match, 1 for a safe everyday fallback."""
+    requested = (requested or "Everyday").strip().lower()
+    available = occasion_tokens(getattr(item, "occasion", ""))
+    if requested == "everyday":
+        return 2 if available.intersection({"everyday", "travel", "work"}) else 0
+    if requested in available:
+        return 2
+    if requested in {"date", "party"} and available.intersection({"date", "party"}):
+        return 2
+    if requested in {"work", "school", "travel", "date", "party"} and "everyday" in available:
+        return 1
+    return 0
+
+
+def occasion_eligible_results(results, requested, limit=5):
+    """Build an occasion-compatible pool before page rotation.
+
+    Outfit-library visual approval is context-free.  Today requests therefore
+    need a request-time gate just like temperature: a high static score must
+    not keep an outfit whose core garments are wrong for the selected occasion.
+    Direct matches are preferred; safe Everyday fallbacks only fill a short
+    page for Work, School, or Travel.
+    """
+    direct = set()
+    fallback = set()
+    passthrough = set()
+    for result in results:
+        core = [
+            item for item in getattr(result, "items", [])
+            if recommendation_slot(item.category, item.subtype) in {"Tops", "Bottoms", "FullBody"}
+        ]
+        if not core:
+            # Explicit personal compositions can intentionally be non-standard.
+            # Their context score may move them down, but request-time policy
+            # must not make them disappear solely for lacking a core slot.
+            passthrough.add(result.id)
+            continue
+        strengths = [_occasion_match_strength(item, requested) for item in core]
+        if not all(strengths):
+            continue
+        if any(strength == 2 for strength in strengths):
+            direct.add(result.id)
+        else:
+            fallback.add(result.id)
+
+    admitted = direct | passthrough
+    if len(admitted) < limit:
+        admitted |= fallback
+    return [result for result in results if result.id in admitted]
+
+
 def _core_item_ids(result):
     return {
         item.id for item in getattr(result, "items", [])
         if recommendation_slot(item.category, item.subtype) in {"Tops", "Bottoms", "FullBody"}
     }
+
+
+def _outerwear_item_ids(result):
+    return {
+        item.id for item in getattr(result, "items", [])
+        if recommendation_slot(item.category, item.subtype) == "Outerwear"
+    }
+
+
+def _base_outfit_id(result):
+    return getattr(result, "outfit_id", None) or result.id.split(":", 1)[0]
 
 
 def _has_short_lower_body(result):
@@ -232,27 +295,52 @@ def stratified_score_rotation(results, uid, rotation_seed, limit, temperature_f=
     selected = []
     selected_ids = set()
     selected_core_ids = set()
+    selected_outerwear_counts = {}
+    selected_base_counts = {}
     short_lower_count = 0
     short_lower_limit = 2
 
-    def take(rows, quota):
+    def take(rows, quota, allow_outerwear_relaxation=False):
         nonlocal short_lower_count
         chosen = []
         # Prefer distinct tops/bottoms and cap short lower-body silhouettes in
         # mild weather. Relax only when the user's library cannot fill a band.
-        for enforce_core, enforce_coverage in [(True, True), (True, False), (False, False)]:
+        passes = [
+            (1, 1, True, True),
+            (1, 1, True, False),
+            (1, 1, False, False),
+        ]
+        if allow_outerwear_relaxation:
+            passes.extend([
+                (2, 2, True, False),
+                (2, 2, False, False),
+                (None, None, False, False),
+            ])
+        for outerwear_limit, base_limit, enforce_core, enforce_coverage in passes:
             for row in rows:
                 if len(chosen) >= quota or row.id in selected_ids:
                     continue
                 core_ids = _core_item_ids(row)
+                outerwear_ids = _outerwear_item_ids(row)
+                base_id = _base_outfit_id(row)
                 is_short_lower = _has_short_lower_body(row)
                 if enforce_core and core_ids.intersection(selected_core_ids):
+                    continue
+                if base_limit is not None and selected_base_counts.get(base_id, 0) >= base_limit:
+                    continue
+                if outerwear_limit is not None and any(
+                    selected_outerwear_counts.get(item_id, 0) >= outerwear_limit
+                    for item_id in outerwear_ids
+                ):
                     continue
                 if enforce_coverage and is_short_lower and short_lower_count >= short_lower_limit:
                     continue
                 chosen.append(row)
                 selected_ids.add(row.id)
                 selected_core_ids.update(core_ids)
+                for item_id in outerwear_ids:
+                    selected_outerwear_counts[item_id] = selected_outerwear_counts.get(item_id, 0) + 1
+                selected_base_counts[base_id] = selected_base_counts.get(base_id, 0) + 1
                 short_lower_count += int(is_short_lower)
         return chosen
 
@@ -265,7 +353,7 @@ def stratified_score_rotation(results, uid, rotation_seed, limit, temperature_f=
             [row for row in results if row.id not in selected_ids],
             "fallback",
         )
-        additions = take(fallback, limit - len(selected))
+        additions = take(fallback, limit - len(selected), allow_outerwear_relaxation=True)
         selected.extend(additions)
     selected.sort(key=lambda row: (-row.score, row.id))
     return selected + [row for row in results if row.id not in selected_ids]
@@ -365,6 +453,7 @@ def recommend_library(repository,engine,uid,context,preferences):
     rotation_seed = getattr(context,'rotation_seed',None)
     temperature_seed = f"{uid}:{rotation_seed or context.occasion}"
     results = temperature_eligible_results(results, styling_temperature, temperature_seed)
+    results = occasion_eligible_results(results, context.occasion, context.limit)
     results = stratified_score_rotation(
         results,
         uid,

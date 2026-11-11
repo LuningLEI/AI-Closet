@@ -17,6 +17,7 @@ struct LibraryOutfitDTO: Decodable, Identifiable {
     let aestheticReason: String
     let visualReviewStatus: String?
     let liked: Bool
+    let replacesOutfitId: UUID?
 }
 
 struct OutfitLibraryResponse: Decodable {
@@ -57,7 +58,14 @@ struct OutfitLibraryView: View {
     @State private var selectedOutfit: LibraryOutfitDTO?
     @State private var refreshID = UUID()
     @State private var requestID = UUID()
+    @State private var initialLoadComplete = false
     @AppStorage("closet.outfits.likedOnly") private var likedOnly = false
+
+    init(closet: ClosetViewModel, initialItemID: UUID? = nil) {
+        _closet = ObservedObject(wrappedValue: closet)
+        self.initialItemID = initialItemID
+        _anchorID = State(initialValue: initialItemID?.uuidString.lowercased() ?? "")
+    }
 
     private var pending: Int { jobs["queued", default: 0] + jobs["processing", default: 0] }
     private var failed: Int { jobs["failed", default: 0] }
@@ -66,7 +74,7 @@ struct OutfitLibraryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text(anchorID.isEmpty ? "\(total) outfits in your library" : "\(total) outfits with this item")
+                Text(libraryStatusTitle)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button { refreshID = UUID() } label: { Image(systemName: "arrow.clockwise") }
@@ -101,7 +109,7 @@ struct OutfitLibraryView: View {
             .buttonStyle(.borderedProminent)
             .disabled(building || pending > 0)
 
-            if loading && outfits.isEmpty {
+            if (!initialLoadComplete || loading) && outfits.isEmpty {
                 ProgressView("Loading outfits").frame(maxWidth: .infinity, minHeight: 120)
             } else if outfits.isEmpty {
                 ContentUnavailableView(
@@ -138,14 +146,11 @@ struct OutfitLibraryView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .outfitLibraryChanged)) { _ in refreshID = UUID() }
-        .onAppear {
-            if let initialItemID { anchorID = initialItemID.uuidString.lowercased() }
-        }
         .onChange(of: anchorID) { _, _ in
-            outfits = []; nextOffset = nil; total = 0
+            outfits = []; nextOffset = nil; total = 0; initialLoadComplete = false
         }
         .onChange(of: likedOnly) { _, _ in
-            outfits = []; nextOffset = nil; total = 0
+            outfits = []; nextOffset = nil; total = 0; initialLoadComplete = false
         }
         .task(id: taskKey) {
             await load()
@@ -163,6 +168,16 @@ struct OutfitLibraryView: View {
                 selectedOutfit = nil
             }
         }
+    }
+
+    private var libraryStatusTitle: String {
+        if !initialLoadComplete || (loading && outfits.isEmpty) {
+            return anchorID.isEmpty ? "Loading outfit library…" : "Loading outfits with this item…"
+        }
+        if !anchorID.isEmpty && outfits.isEmpty && pending > 0 {
+            return "Checking the current build for this item…"
+        }
+        return anchorID.isEmpty ? "\(total) outfits in your library" : "\(total) outfits with this item"
     }
 
     @MainActor private func load(append: Bool = false) async {
@@ -199,9 +214,11 @@ struct OutfitLibraryView: View {
             if append { outfits += unique } else { outfits = unique }
             total = response.total; jobs = response.jobs; enrolled = response.enrolled
             nextOffset = response.nextOffset; error = nil
+            initialLoadComplete = true
         } catch {
             guard !Task.isCancelled && requestID == thisRequest else { return }
             self.error = error.localizedDescription
+            initialLoadComplete = true
         }
     }
 

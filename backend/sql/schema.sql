@@ -1300,11 +1300,13 @@ begin;
 create table if not exists public.personal_outfits (
  id uuid primary key, user_id uuid not null references auth.users(id) on delete cascade,
  item_ids uuid[] not null, title text not null default 'My outfit',
+ source_outfit_id uuid,
  created_at timestamptz not null default now(),
  check(cardinality(item_ids) between 1 and 12)
 );
 create index if not exists personal_outfits_owner on public.personal_outfits(user_id,id);
 create index if not exists personal_outfits_members on public.personal_outfits using gin(item_ids);
+create unique index if not exists personal_outfits_source_override on public.personal_outfits(user_id,source_outfit_id) where source_outfit_id is not null;
 create table if not exists public.outfit_wear_events (
  id uuid primary key, user_id uuid not null references auth.users(id) on delete cascade,
  item_ids uuid[] not null, worn_at timestamptz not null,
@@ -1352,12 +1354,13 @@ returns jsonb language sql stable security definer set search_path=public as $$
  with matching as (
   select c.id,c.payload,c.core_item_ids from current_outfits c join outfit_refresh_requests s on s.user_id=c.user_id
   where c.user_id=p_user_id and s.projection_key=p_key and
+   not exists(select 1 from personal_outfits p where p.user_id=p_user_id and p.source_outfit_id=c.id) and
    (p_anchor is null or c.core_item_ids @> array[p_anchor] or exists(select 1 from current_outfit_layers l where l.outfit_id=c.id and l.item_ids @> array[p_anchor]))
  ), personal as (
  select p.id,p.item_ids as core_item_ids,jsonb_build_object('id',p.id,'items',
   (select jsonb_agg(to_jsonb(i)-array['semantic_vector','feature_vector'] order by i.id) from clothing_items i where i.user_id=p_user_id and i.id=any(p.item_ids)),
   'optional_additions','[]'::jsonb,'aesthetic_score',null,'structural_reason','Saved by you','aesthetic_reason',p.title,
-  'source','personal','visual_review_status','pending') as payload
+  'source','personal','visual_review_status','pending','replaces_outfit_id',p.source_outfit_id) as payload
  from personal_outfits p where p.user_id=p_user_id and (p_anchor is null or p.item_ids @> array[p_anchor])
  and cardinality(p.item_ids)=(select count(*) from clothing_items i where i.user_id=p_user_id and i.id=any(p.item_ids))
  ), combined as (
@@ -1641,7 +1644,7 @@ begin
   execute format('drop trigger if exists %I on public.%I','capture_taste_snapshot',table_name);
   execute format('create trigger capture_taste_snapshot before insert on public.%I for each row execute function public.capture_taste_snapshot()',table_name);
   execute format('drop trigger if exists %I on public.%I','mark_taste_profile_dirty',table_name);
-  execute format('create trigger mark_taste_profile_dirty after insert or delete on public.%I for each row execute function public.mark_taste_profile_dirty()',table_name);
+  execute format('create trigger mark_taste_profile_dirty after insert or update or delete on public.%I for each row execute function public.mark_taste_profile_dirty()',table_name);
  end loop;
 end $$;
 
@@ -1771,3 +1774,33 @@ end $$;
 
 revoke all on function public.publish_free_text_taste_summary(uuid,bigint,integer,jsonb,integer,text,jsonb),public.reset_taste_profile(uuid) from public,anon,authenticated;
 grant execute on function public.publish_free_text_taste_summary(uuid,bigint,integer,jsonb,integer,text,jsonb),public.reset_taste_profile(uuid) to service_role;
+
+-- Migration 020: persistent user edits shadow immutable generated outfits.
+alter table public.personal_outfits add column if not exists source_outfit_id uuid;
+create unique index if not exists personal_outfits_source_override
+  on public.personal_outfits(user_id,source_outfit_id) where source_outfit_id is not null;
+
+create or replace function public.save_personal_outfit_edit(
+  p_id uuid,p_user uuid,p_items uuid[],p_title text,p_source_outfit uuid default null
+) returns jsonb language plpgsql security definer set search_path=public as $$
+declare result personal_outfits; n integer; resolved_source uuid; existing_source uuid;
+begin
+  perform id from clothing_items where user_id=p_user and id=any(p_items) for share;
+  select count(*) into n from clothing_items where user_id=p_user and id=any(p_items);
+  if n<>cardinality(p_items) or n<1 or n>12 then raise exception 'Invalid outfit members'; end if;
+  resolved_source:=p_source_outfit;
+  if p_source_outfit is not null then
+    select source_outfit_id into existing_source from personal_outfits where id=p_source_outfit and user_id=p_user;
+    if found then resolved_source:=existing_source; end if;
+  end if;
+  insert into personal_outfits(id,user_id,item_ids,title,source_outfit_id,feature_snapshot)
+  values(p_id,p_user,p_items,left(p_title,120),resolved_source,public.taste_snapshot(p_user,p_items,'{}'::jsonb))
+  on conflict(id) do update set item_ids=excluded.item_ids,title=excluded.title,
+    source_outfit_id=coalesce(personal_outfits.source_outfit_id,excluded.source_outfit_id),
+    feature_snapshot=excluded.feature_snapshot where personal_outfits.user_id=p_user;
+  select * into result from personal_outfits where id=p_id and user_id=p_user;
+  if result is null then raise exception 'Outfit identity conflict'; end if;
+  return to_jsonb(result);
+end $$;
+revoke all on function public.save_personal_outfit_edit(uuid,uuid,uuid[],text,uuid) from public,anon,authenticated;
+grant execute on function public.save_personal_outfit_edit(uuid,uuid,uuid[],text,uuid) to service_role;
